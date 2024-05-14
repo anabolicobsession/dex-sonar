@@ -7,14 +7,13 @@ import geckoterminal_api
 import requests.exceptions
 
 import settings
-from pools import Pools, TimeData, Address, Token, DEXId, DEX
 from utils import Datetime
+from network import Pools, TimeData, Address, Token, DEXId, DEX
 
 logger = logging.getLogger(__name__)
 
 
-class UnexpectedValueError(Exception):
-    pass
+class UnexpectedValueError(Exception): pass
 
 
 class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
@@ -48,12 +47,12 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
                     response = request(network=settings.NETWORK, page=i)
                     self._increase_requests()
 
-                except requests.ReadTimeout as e:
-                    logger.info(f'{e}')
-
                 except KeyError as e:
                     logger.info(f'Request limit exceeded. Waiting for new resources')
                     await asyncio.sleep(10)
+
+                except requests.ReadTimeout as e:
+                    logger.info(f'{e}')
 
             if response['data']:
                 data = data | {x['id']: x for x in response['data']}
@@ -65,11 +64,13 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
 
     async def update_pools(self, pools: Pools):
         self._clear_requests()
+
         data, included = await self._request_data(self.network_pools)
         new_data, new_included = await self._request_data(self.network_new_pools)
+
         old_data_len = len(data)
         data, included = {**data, **new_data}, {**included, **new_included}
-        logger.info(f'Total/Top/New pools: {len(data)}/{old_data_len}/{len(new_data)}')
+        logger.info(f'Total pools: {len(data)}, Top pools: {old_data_len}, New pools: {len(new_data)}')
 
         tokens: dict[Address, Token] = {}
         dexes: dict[DEXId, DEX] = {}

@@ -1,14 +1,15 @@
 import os
 import time
+from enum import Enum
+from typing import Any
 
 import pandas as pd
 
 import settings
-from pools import Token, Pools
+from network import Token
 
 
 Id = int
-Address = str
 
 
 class Timestamp:
@@ -30,9 +31,8 @@ class TokenBalance:
         self.token: Token = token
         self.amount = amount
         self.rate = rate
-        self.timestamp = Timestamp()
 
-    def update(self, amount=None, rate=None):
+    def set(self, amount=None, rate=None):
         if amount: self.amount = amount
         if rate: self.rate = rate
 
@@ -41,17 +41,13 @@ class TokenBalance:
 
 
 class User:
-    def __init__(self, id, wallet: Address):
+    def __init__(self, id: Id):
         self.id: Id = id
-        self.wallet = wallet
         self.token_balances: dict[Token, TokenBalance] = {}
         self.last_token_notifications: dict[Token, Timestamp] = {}
 
-    def update_token_balance(self, token: Token, **data):
-        if token not in self.token_balances:
-            self.token_balances[token] = TokenBalance(token, **data)
-        else:
-            self.token_balances[token].update(**data)
+    def add_token_balance(self, token_balance: TokenBalance):
+        self.token_balances[token_balance.token] = token_balance
 
     def get_token_balance(self, token: Token) -> TokenBalance | None:
         return self.token_balances.get(token, None)
@@ -65,49 +61,68 @@ class User:
         return self.last_token_notifications[token]
 
 
+class Property(str, Enum):
+    ID = 'id'
+    MAIN_MESSAGE_ID = 'main_message_id'
+    WALLET = 'wallet'
+
+
+property_dtypes = {
+    Property.ID: 'int',
+    Property.MAIN_MESSAGE_ID: 'int',
+    Property.WALLET: 'str',
+}
+
+
 class Users:
     def __init__(self):
-        self.users: dict[Id, User] = {
-        }
-        self.pinned_messages_ids = pd.DataFrame({'user_id': pd.Series(dtype='int'), 'pinned_message_id': pd.Series(dtype='int')})
-        self.pinned_messages_ids.set_index('user_id', inplace=True)
-        self.followlists = pd.DataFrame({'user_id': pd.Series(dtype='int'), 'token_address': pd.Series(dtype='str')})
-        self._init()
+        self.users: dict[Id, User] = {}
+        self.user_database = pd.DataFrame(
+            index=pd.Series(name=Property.ID, dtype=property_dtypes[Property.ID]),
+            data={k: pd.Series(dtype=v) for k, v in property_dtypes.items() if k is not Property.ID}
+        )
 
-    def _init(self):
-        if os.path.isfile(settings.PINNED_MESSAGES_IDS_PATH):
-            self.pinned_messages_ids = pd.read_csv(settings.PINNED_MESSAGES_IDS_PATH, index_col=0)
-        if os.path.isfile(settings.FOLLOWLISTS_PATH):
-            self.followlists = pd.read_csv(settings.FOLLOWLISTS_PATH)
+        if os.path.isfile(settings.DATABASES_PATH_USERS):
+            self.user_database = pd.read_csv(settings.DATABASES_PATH_USERS, index_col=0, dtype=property_dtypes).astype(object)
 
-    def get_users(self) -> list[User]:
-        return list(self.users.values())
+            for id in self.user_database.index:
+                self.users[id] = User(id)
+
+    def has_user(self, id: Id):
+        return id in self.users
 
     def get_user(self, id: Id) -> User:
         return self.users[id]
 
-    def set_pinned_message_id(self, user: User, id: Id):
-        self.pinned_messages_ids.loc[user.id] = id
-        self.pinned_messages_ids.to_csv(settings.PINNED_MESSAGES_IDS_PATH)
+    def get_users(self) -> list[User]:
+        return list(self.users.values())
 
-    def remove_pinned_message_id(self, user: User):
-        self.pinned_messages_ids.drop(user.id, inplace=True)
-        self.pinned_messages_ids.to_csv(settings.PINNED_MESSAGES_IDS_PATH)
+    def _save_user_database_to_disk(self):
+        self.user_database.to_csv(settings.DATABASES_PATH_USERS)
 
-    def has_pinned_message_id(self, user: User):
-        return user.id in self.pinned_messages_ids.index
+    def add_user(self, id: Id):
+        self.users[id] = User(id)
+        self.user_database.loc[id] = pd.NA
+        self._save_user_database_to_disk()
 
-    def get_pinned_message_id(self, user: User):
-        return self.pinned_messages_ids.loc[user.id].item()
+    def remove_user(self, id: Id):
+        self.users.pop(id)
+        self.user_database.drop(index=id, inplace=True)
+        self._save_user_database_to_disk()
 
-    def add_to_followlist(self, user: User, token: Token):
-        self.followlists.loc[len(self.followlists.index)] = user.id, token.address
-        self.followlists.to_csv(settings.FOLLOWLISTS_PATH, index=False)
+    def set_property(self, user: User, property: Property, value):
+        self.user_database.loc[user.id, property] = value
+        self._save_user_database_to_disk()
 
-    def remove_from_followlist(self, user: User, token: Token):
-        idx = self.followlists[(self.followlists['user_id'] == user.id) & (self.followlists['token_address'] == token.address)].index
-        self.followlists.drop(idx, inplace=True)
-        self.followlists.to_csv(settings.FOLLOWLISTS_PATH, index=False)
+    def clear_property(self, user: User, property: Property):
+        self.user_database.loc[user.id, property] = pd.NA
+        self._save_user_database_to_disk()
 
-    def get_followlist(self, user: User, pools: Pools) -> list[Token]:
-        return [pools.get_token(a) for a in self.followlists.loc[self.followlists['user_id'] == user.id]['token_address'].to_list()]
+    def has_property(self, user: User, property: Property):
+        return not pd.isna(self.user_database.loc[user.id, property])
+
+    def get_property(self, user: User, property: Property):
+        return self.user_database.loc[user.id, property]
+
+    def get_property_if_exists(self, user: User, property: Property) -> Any | None:
+        return self.user_database.loc[user.id, property] if self.has_property(user, property) else None

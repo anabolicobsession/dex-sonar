@@ -1,32 +1,91 @@
 import asyncio
 from collections.abc import Iterable
 import logging
-import os
 import time
 from asyncio import CancelledError
 from datetime import datetime
+from enum import Enum, auto
 
+from telegram import error, Bot, Update, Message, LinkPreviewOptions
+from telegram.constants import ParseMode
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Defaults
+from telegram.ext.filters import UpdateFilter
+from aiogram import html
 from pytonapi import AsyncTonapi
 from pytonapi.schema.jettons import JettonBalance
-from telegram import error, Bot, Update, Message
-from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
-from aiogram import html
 
 import settings
+import users
 from gecko_terminal_api_wrapper import GeckoTerminalAPIWrapper
-from pools import Pools, Pool, Token
-from users import User, Users
+from network import Pools, Pool
+from users import User, Users, Property, TokenBalance
 from utils import format_number, round_to_significant_figures, clear_from_html
 
-logging.basicConfig(format=settings.LOGGING_FORMAT, level=settings.LOGGING_LEVEL)
-logging.getLogger("httpx").setLevel(logging.WARNING)  # set higher logging level for httpx to avoid all GET and POST requests being logged
-logger = logging.getLogger(__name__)
 
-file_handler = logging.FileHandler(settings.LOGGING_WARNINGS_PATH, mode='w')
-file_handler.setLevel(logging.WARNING)
-file_handler.setFormatter(logging.Formatter(settings.LOGGING_FORMAT))
-logger.addHandler(file_handler)
+root_logger = logging.getLogger()
+root_logger.setLevel(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logging_formatter = logging.Formatter(settings.LOGGING_FORMAT)
+
+handler = logging.StreamHandler()
+handler.setLevel(logging.INFO)
+handler.setFormatter(logging_formatter)
+root_logger.addHandler(handler)
+
+handler = logging.FileHandler(settings.LOGGING_PATH_WARNINGS, mode='w')
+handler.setLevel(logging.WARNING)
+handler.setFormatter(logging_formatter)
+root_logger.addHandler(handler)
+
+handler = logging.FileHandler(settings.LOGGING_PATH_DEBUG, mode='w')
+handler.setLevel(logging.DEBUG)
+handler.setFormatter(logging_formatter)
+root_logger.addHandler(handler)
+
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore.http11').setLevel(logging.INFO)
+logging.getLogger('httpcore.connection').setLevel(logging.INFO)
+
+
+MessageID = int
+
+
+class Status(Enum):
+    SUCCESS = auto()
+    BLOCK = auto()
+    EXCEPTION = auto()
+
+
+class ImpossibleAction(Exception): pass
+
+
+class UnknownException(Exception): pass
+
+
+class FilterOnlyFromID(UpdateFilter):
+    def __init__(self, id: users.Id):
+        super().__init__()
+        self.id = id
+
+    def filter(self, update: Update):
+        if update.message.chat_id != self.id:
+            user = update.message.from_user
+            logger.warning(f'Someone else\'s is trying to use the bot: {user.id}/{user.username}/{user.full_name} - Message: {update.message.text}')
+            return False
+        return True
+
+
+class FilterNotInBlacklist(UpdateFilter):
+    def __init__(self, blacklist: set[users.Id]):
+        super().__init__()
+        self.blacklist = blacklist
+
+    def filter(self, update: Update):
+        if update.message.chat_id in self.blacklist:
+            user = update.message.from_user
+            logger.warning(f'Someone from blacklist is trying to use the bot: {user.id}/{user.username}/{user.full_name} - Message: {update.message.text}')
+            return False
+        return True
 
 
 def pools_to_message(
@@ -134,7 +193,8 @@ def pools_to_message(
 
 
 class DEXScanner:
-    def     __init__(self):
+    def __init__(self):
+        self.bot: Bot | None = None
         self.pools = Pools(
             pool_filter=lambda p:
             p.quote_token.is_native_currency() and
@@ -143,31 +203,28 @@ class DEXScanner:
             repeated_pool_filter_key=lambda p:
             p.volume,
         )
-        self.growing_pools_cached = None
         self.users: Users = Users()
+        self.blacklist: set[users.Id] = settings.BLACKLIST_TELEGRAM_ID
         self.geckoterminal_api = GeckoTerminalAPIWrapper(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
-        self.ton_api = AsyncTonapi(api_key=os.environ.get('TON_API_KEY'))
-
-        self.application = ApplicationBuilder().token(os.environ.get('TELEGRAM_BOT_TOKEN')).build()
-        self.bot: Bot = self.application.bot
-
-        self.application.add_handler(CommandHandler('help', self.help))
-        self.application.add_handler(CommandHandler('resend', self.resend))
-        self.application.add_handler(CommandHandler('follow', self.follow))
-        self.application.add_handler(CommandHandler('unfollow', self.unfollow))
+        self.ton_api = AsyncTonapi(api_key=settings.TON_API_KEY)
 
     def run(self):
         asyncio.run(self.run_event_loop())
 
     async def run_event_loop(self):
-        await self.bot.set_my_commands([
-            ('/help', settings.COMMAND_HELP_DESCRIPTION),
-            ('/resend', settings.COMMAND_RESEND_DESCRIPTION),
-        ])
+        defaults = Defaults(parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
+        application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).defaults(defaults).build()
+        self.bot = application.bot
 
-        async with self.application:
-            await self.application.start()
-            await self.application.updater.start_polling()
+        message_filter = FilterNotInBlacklist(self.blacklist) if settings._RUNNING_MODE else FilterOnlyFromID(settings.DEVELOPER_TELEGRAM_ID)
+        application.add_handler(CommandHandler(settings.COMMAND_START, self.start, message_filter))
+        application.add_handler(CommandHandler(settings.COMMAND_HELP, self.help, message_filter))
+        application.add_handler(CommandHandler(settings.COMMAND_RESEND, self.resend, message_filter))
+        await self.bot.set_my_commands(settings.COMMAND_MENU)
+
+        async with application:
+            await application.start()
+            await application.updater.start_polling()
 
             try:
                 while True:
@@ -175,8 +232,22 @@ class DEXScanner:
             except CancelledError as e:
                 logger.info(f'Stopping the bot because of an exit signal{" - " + str(e) if str(e) else str(e)}')
 
-            await self.application.updater.stop()
-            await self.application.stop()
+            await application.updater.stop()
+            await application.stop()
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        id = update.message.chat_id
+
+        if not self.users.has_user(id):
+            user = update.message.from_user
+            logger.warning(f'New user started the bot: {user.id}/{user.username}/{user.full_name}')
+            self.users.add_user(id)
+
+        await update.message.reply_text(settings.COMMAND_START_MESSAGE)
+
+    @staticmethod
+    async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE)
 
     async def run_one_cycle(self):
         start_time = time.time()
@@ -184,89 +255,77 @@ class DEXScanner:
         logger.info('Updating pools')
         self.pools.clear()
         await self.geckoterminal_api.update_pools(self.pools)
-        logger.info(f'Pools/Tokens: {len(self.pools)}/{len(self.pools.get_tokens())}')
+        logger.info(f'Pools: {len(self.pools)}, Tokens: {len(self.pools.get_tokens())}')
 
-        def growth_score(p: Pool):
-            return 3 * max(p.price_change.m5 * 100, 0) + max(p.price_change.h1 * 100, 0)
-
-        growing_pools = [p for p in self.pools if growth_score(p) > 5]
-        growing_pools.sort(key=growth_score, reverse=True)
-        logger.info(f'Updating pinned messages - Growing pools: {len(growing_pools)}')
-        await self.update_pinned_message(growing_pools)
-
-        pumped_pools = [p for p in growing_pools if growth_score(p) > 25]
-        growing_pools.sort(key=growth_score, reverse=True)
-        logger.info(f'Sending notifications (if there are) - Pumped pools: {len(pumped_pools)}')
-        await self.send_notifications(pumped_pools)
+        await self.update_main_message()
+        await self.send_pump_notification()
 
         cooldown = settings.UPDATES_COOLDOWN - (time.time() - start_time)
         if cooldown > 0:
             logger.info(f'Going to asynchronous sleep - {cooldown:.0f}s')
             await asyncio.sleep(cooldown)
 
-    async def update_pinned_message(self, growing_pools):
-        self.growing_pools_cached = growing_pools
+    async def update_main_message(self):
+        growing_pools = [p for p in self.pools if self.pool_score(p) > 10]
+        growing_pools.sort(key=self.pool_score, reverse=True)
+        logger.info(f'Updating main message - Growing pools: {len(growing_pools)}')
 
-        for user in self.users.get_users():
-            followlist = self.users.get_followlist(user, self.pools)
+        message = pools_to_message(
+            growing_pools,
+            prefix='Growing pools',
+            postfix=('', datetime.now().strftime('%d.%m.%Y, %H:%M:%S')),
+            age=True,
+            fdv=True,
+            volume=True,
+            liquidity=True,
+            transactions=True,
+            makers=True,
+            price_change=True,
+            buyers_sellers_change=True
+        )
 
-            message = pools_to_message(
-                [self.pools.find_best_token_pool(t, key=lambda p: p.volume) for t in followlist if self.pools.has_token(t)],
-                prefix='Followlist',
-                age=True,
-                fdv=True,
-                volume=True,
-                liquidity=True,
-                transactions=True,
-                makers=True,
-                price_change=True,
-                buyers_sellers_change=True
-            )
-            message = pools_to_message(
-                [p for p in growing_pools if p.base_token not in followlist],
-                prefix='Growing pools',
-                postfix=('', datetime.now().strftime('%d.%m.%Y, %H:%M:%S')),
-                message_before=message,
-                age=True,
-                fdv=True,
-                volume=True,
-                liquidity=True,
-                transactions=True,
-                makers=True,
-                price_change=True,
-                buyers_sellers_change=True
-            )
+        if message:
+            for user in self.users.get_users():
+                main_message_id = self.users.get_property_if_exists(user, Property.MAIN_MESSAGE_ID)
+                sending = not bool(main_message_id)
 
-            if message:
-                if not self.users.has_pinned_message_id(user):
+                message, status = await self.send_or_edit_message(message, user, message_id=main_message_id, disable_notification=True)
+                message_id = message.message_id
+                id_str = f'User ID: {user.id}/{message_id}'
 
-                    if message := await self.send_message(message, user):
-                        if await self.unpin_all_messages(user):
+                if sending and status == Status.SUCCESS:
+                    if await self.bot.unpin_all_chat_messages(user.id):
 
-                            if await self.pin_message(user, message.message_id):
-                                self.users.set_pinned_message_id(user, message.message_id)
-                            else:
-                                logger.warning(f'Can\'t pin the message - {user.id}/{message.message_id}')
+                        if await self.bot.pin_chat_message(user.id, message_id, disable_notification=True):
+                            self.users.set_property(user, Property.MAIN_MESSAGE_ID, message_id)
                         else:
-                            logger.warning(f'Can\'t unpin all chat messages - {user.id}')
+                            logger.error(f'Can\'t pin the main message - {id_str}')
+                    else:
+                        logger.error(f'Can\'t unpin all chat messages - {id_str}')
+                elif status == Status.BLOCK:
+                    self.users.remove_user(user.id)
 
-                elif not await self.edit_message(message, user, self.users.get_pinned_message_id(user)):
-                    logger.info(f'Can\'t edit the pinned message - {user.id}/{self.users.get_pinned_message_id(user)}')
-                    self.users.remove_pinned_message_id(user)
+    async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self.users.clear_property(self.users.get_user(update.message.chat_id), Property.MAIN_MESSAGE_ID)
+        await self.update_main_message()
 
-    async def send_notifications(self, pumped_pools):
+    async def send_pump_notification(self):
+        pumped_pools = [p for p in self.pools if self.pool_score(p) > 25]
+        pumped_pools.sort(key=self.pool_score, reverse=True)
+        logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools)}')
+
         async def get_jetton_balances(user: User) -> list[JettonBalance] | None:
             try:
-                return (await self.ton_api.accounts.get_jettons_balances(user.wallet)).balances
+                return (await self.ton_api.accounts.get_jettons_balances(self.users.get_property(user, Property.WALLET))).balances
 
             except AttributeError as e:
-                logger.warning(f'Getting jetton balances via TON API: {str(e)} - {user.id}')
+                logger.error(f'Exception occurred during using TON API - {user.id} - {e}')
                 return None
 
         for user in self.users.get_users():
             data = []
 
-            if jetton_balances := await get_jetton_balances(user):
+            if self.users.has_property(user, Property.WALLET) and (jetton_balances := await get_jetton_balances(user)):
                 for x in jetton_balances:
                     balance = int(x.balance)
                     token = self.pools.get_token(x.jetton.address.to_userfriendly(is_bounceable=True))
@@ -276,7 +335,8 @@ class DEXScanner:
                         if pool := self.pools.find_best_token_pool(token, key=lambda p: p.volume):
 
                             if not token_balance:
-                                token.update(decimals=x.jetton.decimals)  # update info about token itself
+                                user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_currency))
+                                token.update(decimals=x.jetton.decimals)
                             else:
                                 change = 1 - pool.price_in_native_currency / token_balance.rate
                                 notification = user.get_last_token_notification(token)
@@ -287,8 +347,9 @@ class DEXScanner:
                                 ):
                                     notification.make()
                                     data.append((pool, change))
-
-                            user.update_token_balance(token, amount=balance, rate=pool.price_in_native_currency)
+                                    token_balance.set(amount=balance, rate=pool.price_in_native_currency)
+                                else:
+                                    token_balance.set(amount=balance)
                     elif token_balance:
                         user.remove_token_balance(token_balance)
 
@@ -300,7 +361,7 @@ class DEXScanner:
             for pool in pumped_pools:
                 notification = user.get_last_token_notification(pool.base_token)
 
-                if not pool in wallet_pools_user:
+                if pool not in wallet_pools_user:
                     if not notification.has_been_made() or notification.seconds_passed() > settings.NOTIFICATIONS_PUMP_COOLDOWN:
                         notification.make()
                         pumped_pools_user.append(pool)
@@ -340,94 +401,49 @@ class DEXScanner:
             if message:
                 await self.send_message(message, user)
 
-    async def send_message(self, text, user: User) -> Message | None:
-        prefix = 'Sending message: '
+    @staticmethod
+    def pool_score(pool: Pool):
+        return 3 * max(pool.price_change.m5 * 100, 0) + max(pool.price_change.h1 * 100, 0)
+
+    async def send_message(self, text, user: User, disable_notification=False) -> tuple[Message | None, Status]:
+        return await self.send_or_edit_message(text, user, disable_notification=disable_notification)
+
+    async def edit_message(self, text, user: User, message_id: MessageID) -> tuple[Message | None, Status]:
+        return await self.send_or_edit_message(text, user, message_id)
+
+    async def send_or_edit_message(self, text, user: User, message_id: MessageID = None, disable_notification=False) -> tuple[Message | None, Status]:
+        def to_info(str, append=None):
+            return f'{str} - Used ID: {user.id}' + (f'/{message_id}' if message_id else '') + (f' - {append}' if append else '')
 
         try:
-            return await self.bot.send_message(user.id, text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            if not message_id:
+                return await self.bot.send_message(user.id, text, disable_notification=disable_notification), Status.SUCCESS
+            else:
+                message = await self.bot.edit_message_text(text, user.id, message_id)
+                if isinstance(message, Message):
+                    return message, Status.SUCCESS
+                else:
+                    raise ImpossibleAction(to_info('You can\'t edit an inline message'))
 
         except error.Forbidden as e:
-            logger.info(f'{prefix}{e} - {user.id}')
+            if str(e) == settings.TELEGRAM_FORBIDDEN_BLOCK:
+                logger.info(f'User blocked the bot')
+                return None, Status.BLOCK
+            else:
+                raise UnknownException(e)
 
         except error.BadRequest as e:
-            if str(e) == settings.BAD_REQUEST_MESSAGE_IS_TOO_LONG:
-                logger.error(f'{prefix}{e} - {len(clear_from_html(text))} chars - {user.id}')
+            if str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
+                logger.error(to_info(e))
+            elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG:
+                logger.error(to_info(e, f'{len(clear_from_html(text))} chars'))
+            else:
+                raise UnknownException(e)
+            return None, Status.EXCEPTION
 
         except error.TimedOut as e:
-            logging.warning(f'{prefix}{e} - {user.id}')
-
-        return None
-
-    async def edit_message(self, text, user: User, message_id) -> bool:
-        prefix = 'Editing message: '
-
-        try:
-            return await self.bot.edit_message_text(text, user.id, message_id, parse_mode=ParseMode.HTML, disable_web_page_preview=True) is not True
-
-        except error.Forbidden as e:
-            logger.info(f'{prefix}{e} - {user.id}')
-
-        except error.BadRequest as e:
-            if str(e) ==  settings.BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
-                logger.warning(f'{prefix}{e} - {user.id}/{message_id}')
-            elif str(e) == settings.BAD_REQUEST_MESSAGE_IS_TOO_LONG:
-                logger.error(f'{prefix}{e} - {len(clear_from_html(text))} chars - {user.id}/{message_id}')
-
-        except error.TimedOut as e:
-            logging.warning(f'{prefix}{e} - {user.id}/{message_id}')
-
-        return False
-
-    async def pin_message(self, user: User, message_id) -> bool:
-        return await self.bot.pin_chat_message(user.id, message_id, disable_notification=True)
-
-    async def unpin_all_messages(self, user: User) -> bool:
-        return await self.bot.unpin_all_chat_messages(user.id)
-
-    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE, parse_mode=ParseMode.HTML)
-
-    async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self.users.remove_pinned_message_id(self.users.get_user(update.message.chat_id))
-        await self.update_pinned_message(self.growing_pools_cached)
-
-    async def follow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.message.chat_id
-
-        if (result := await self._extract_symbol_and_tokens(update)) is not None:
-            symbol, matches = result
-
-            if len(matches) == 1:
-                self.users.add_to_followlist(self.users.get_user(user_id), matches[0])
-                await update.message.reply_text(f'{matches[0].ticker} was added to the followlist')
-            elif len(matches) > 1:
-                logger.info(f'/follow: Multiple tokens with symbol {symbol} - {user_id}')
-                await update.message.reply_text(f'There are multiple tokens with this symbol, symbol is ambiguous')
-            else:
-                logger.info(f'/follow: Unknown symbol {symbol} - {user_id}')
-                await update.message.reply_text(f'Unknown symbol')
-
-    async def unfollow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.message.chat_id
-
-        if (result := await self._extract_symbol_and_tokens(update)) is not None:
-            symbol, matches = result
-
-            if len(matches) == 1:
-                self.users.remove_from_followlist(self.users.get_user(user_id), matches[0])
-                await update.message.reply_text(f'{matches[0].ticker} was removed from the followlist')
-            else:
-                logger.info(f'Unknown symbol or there are multiple tokens with symbol {symbol} - {user_id}')
-                await update.message.reply_text(f'Unknown symbol or there are multiple tokens with such symbol')
-
-    async def _extract_symbol_and_tokens(self, update: Update) -> tuple[str, list[Token]] | None:
-        try:
-            symbol = update.message.text.split(' ', 1)[1].strip()
-            return symbol, [t for t in self.pools.get_tokens() if t.ticker.lower() == symbol.lower()]
-        except Exception as e:
-            logger.info(f'/follow: Invalid argument: {update.message.text} - {e}')
-            await update.message.reply_text(f'Invalid argument')
-            return None
+            logging.warning(to_info(e))
+            return None, Status.EXCEPTION
 
 
 if __name__ == '__main__':
