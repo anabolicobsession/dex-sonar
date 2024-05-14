@@ -52,6 +52,7 @@ MessageID = int
 
 class Status(Enum):
     SUCCESS = auto()
+    REMOVED = auto()
     BLOCK = auto()
     EXCEPTION = auto()
 
@@ -261,15 +262,20 @@ class DEXScanner:
                 message_id = message.message_id
                 id_str = f'User ID: {user.id}/{message_id}'
 
-                if sending and status == Status.SUCCESS:
-                    if await self.bot.unpin_all_chat_messages(user.id):
+                match status:
+                    case Status.SUCCESS:
+                        if sending:
+                            if await self.bot.unpin_all_chat_messages(user.id):
 
-                        if await self.bot.pin_chat_message(user.id, message_id, disable_notification=True):
-                            self.users.set_property(user, Property.MAIN_MESSAGE_ID, message_id)
-                        else:
-                            logger.error(f'Can\'t pin the main message - {id_str}')
-                    else:
-                        logger.error(f'Can\'t unpin all chat messages - {id_str}')
+                                if await self.bot.pin_chat_message(user.id, message_id, disable_notification=True):
+                                    self.users.set_property(user, Property.MAIN_MESSAGE_ID, message_id)
+                                else:
+                                    logger.error(f'Can\'t pin the main message - {id_str}')
+                            else:
+                                logger.error(f'Can\'t unpin all chat messages - {id_str}')
+                    case Status.REMOVED:
+                        self.users.clear_property(user, Property.MAIN_MESSAGE_ID)
+
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.users.clear_property(self.users.get_user(update.message.chat_id), Property.MAIN_MESSAGE_ID)
@@ -376,12 +382,19 @@ class DEXScanner:
                 raise UnknownException(e)
 
         except error.BadRequest as e:
-            if str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
+            if str(e) == settings.TELEGRAM_MESSAGE_TO_EDIT_NOT_FOUND:
+                logger.warning(to_info(e))
+                return None, Status.REMOVED
+
+            elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
                 logger.error(to_info(e))
+
             elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG:
                 logger.error(to_info(e, f'{len(clear_from_html(text))} chars'))
+
             else:
                 raise UnknownException(e)
+
             return None, Status.EXCEPTION
 
         except error.TimedOut as e:
