@@ -92,46 +92,32 @@ def pools_to_message(
         pools: Iterable[Pool],
         prefix: str | tuple[str, str] | None = None,
         postfix: str | tuple[str, str] | None = None,
-        message_before=None,
-        line_width=36,
-        message_max_length=settings.TELEGRAM_MESSAGE_MAX_LEN,
         balance=None,
         change=None,
-        age=False,
-        fdv=False,
-        volume=False,
-        liquidity=False,
-        transactions=False,
-        makers=False,
-        txs_per_wallet=False,
-        price_change=False,
-        buys_sells_change=False,
-        buyers_sellers_change=False,
+        line_width=settings.TELEGRAM_MESSAGE_MAX_WIDTH,
+        message_max_length=settings.TELEGRAM_MESSAGE_MAX_LEN,
 ):
     message_pools = ''
 
     def spaces(n):
         return ' ' * n
 
-    if prefix:
-        if isinstance(prefix, str):
-            prefix = html.code(spaces((line_width - len(prefix)) // 2) + prefix)
-        else:
-            left, right = prefix
-            prefix = html.code(left + spaces(line_width - (len(left) + len(right))) + right)
+    def fit_prefix_or_postfix(x):
+        if x:
+            if isinstance(x, str):
+                return html.code(spaces((line_width - len(x)) // 2) + x)
+            else:
+                left, right = x
+                return html.code(left + spaces(line_width - (len(left) + len(right))) + right)
+        return None
 
-    if postfix:
-        if isinstance(postfix, str):
-            postfix = html.code(spaces((line_width - len(postfix)) // 2) + postfix)
-        else:
-            left, right = postfix
-            postfix = html.code(left + spaces(line_width - (len(left) + len(right))) + right)
+    prefix, postfix = fit_prefix_or_postfix(prefix), fit_prefix_or_postfix(postfix)
 
     def get_updated_message_pools(message_pool):
         return message_pools + ('\n\n' if message_pools else '') + message_pool
 
     def get_full_message(message_pools):
-        return '\n\n'.join(filter(bool, [message_before, prefix, message_pools, postfix]))
+        return '\n\n'.join(filter(bool, [prefix, message_pools, postfix]))
 
     def add_line(str1, str2):
         lines.append(f'{str1}{spaces(line_width - (len(str1) + len(str2)))}{str2}')
@@ -144,30 +130,24 @@ def pools_to_message(
             format_number(pool.price, 4, 9, symbol='$', significant_figures=2)
         )
 
-        if balance: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
-        if change: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
-        if age: add_line('Age:', pool.creation_date.difference_to_pretty_str())
-        if fdv: add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
-        if volume: add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
-        if liquidity: add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
-        if transactions: add_line('Transactions:', str(round_to_significant_figures(pool.transactions, 2)))
-        if makers: add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
-        if txs_per_wallet: add_line('TXs/wallet', str(round_to_significant_figures(pool.transactions_per_wallet, 2)))
+        if balance and balance[i]: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
+        if change and change[i]: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
+        add_line('Age:', pool.creation_date.difference_to_pretty_str())
+        add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
+        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
+        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
+        add_line('Transactions:', str(round_to_significant_figures(pool.transactions, 2)))
+        add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
 
-        if price_change:
-            m5 = format_number(pool.price_change.m5, 3, sign=True, percent=True, significant_figures=2)
-            h1 = format_number(pool.price_change.h1, 4, sign=True, percent=True, significant_figures=2)
-            h24 = format_number(pool.price_change.h24, 4, sign=True, percent=True, significant_figures=2)
-            add_line('Price:', f'{m5} {h1} {h24}')
+        m5 = format_number(pool.price_change.m5, 3, sign=True, percent=True, significant_figures=2)
+        h1 = format_number(pool.price_change.h1, 4, sign=True, percent=True, significant_figures=2)
+        h24 = format_number(pool.price_change.h24, 4, sign=True, percent=True, significant_figures=2)
+        add_line('Price:', f'{m5} {h1} {h24}')
 
-        tuples = []
-        if buys_sells_change: tuples.append(('Buys/sells:', pool.buys_sells_ratio))
-        if buyers_sellers_change: tuples.append(('Buyers/sellers:', pool.buyers_sellers_ratio))
-        for name, td in tuples:
-            m5 = format_number(round(td.m5, 1), 4, 1)
-            h1 = format_number(round(td.h1, 1), 4, 1)
-            h24 = format_number(round(td.h24, 1), 4, 1)
-            add_line(name, f'{m5} {h1} {h24}')
+        m5 = format_number(round(pool.buyers_sellers_ratio.m5, 1), 4, 1)
+        h1 = format_number(round(pool.buyers_sellers_ratio.h1, 1), 4, 1)
+        h24 = format_number(round(pool.buyers_sellers_ratio.h24, 1), 4, 1)
+        add_line('Buyers/sellers:', f'{m5} {h1} {h24}')
 
         link_gecko = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK}/pools/{pool.address}')
         link_dex = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK}/{pool.address}')
@@ -185,10 +165,6 @@ def pools_to_message(
         else:
             break
 
-    if not message_pools:
-        prefix = None
-        postfix = None
-
     return get_full_message(message_pools)
 
 
@@ -204,7 +180,7 @@ class DEXScanner:
             p.volume,
         )
         self.users: Users = Users()
-        self.blacklist: set[users.Id] = settings.BLACKLIST_TELEGRAM_ID
+        self.blacklist: set[users.Id] = settings.BLACKLIST_CHAT_ID
         self.geckoterminal_api = GeckoTerminalAPIWrapper(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
         self.ton_api = AsyncTonapi(api_key=settings.TON_API_KEY)
 
@@ -216,9 +192,9 @@ class DEXScanner:
         application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).defaults(defaults).build()
         self.bot = application.bot
 
-        message_filter = FilterNotInBlacklist(self.blacklist) if settings._RUNNING_MODE else FilterOnlyFromID(settings.DEVELOPER_TELEGRAM_ID)
-        application.add_handler(CommandHandler(settings.COMMAND_START, self.start, message_filter))
+        message_filter = FilterNotInBlacklist(self.blacklist) if settings._RUNNING_MODE else FilterOnlyFromID(settings.DEVELOPER_CHAT_ID)
         application.add_handler(CommandHandler(settings.COMMAND_HELP, self.help, message_filter))
+        application.add_handler(CommandHandler(settings.COMMAND_START, self.start, message_filter))
         application.add_handler(CommandHandler(settings.COMMAND_RESEND, self.resend, message_filter))
         await self.bot.set_my_commands(settings.COMMAND_MENU)
 
@@ -235,6 +211,10 @@ class DEXScanner:
             await application.updater.stop()
             await application.stop()
 
+    @staticmethod
+    async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE)
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         id = update.message.chat_id
 
@@ -244,10 +224,6 @@ class DEXScanner:
             self.users.add_user(id)
 
         await update.message.reply_text(settings.COMMAND_START_MESSAGE)
-
-    @staticmethod
-    async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE)
 
     async def run_one_cycle(self):
         start_time = time.time()
@@ -274,14 +250,6 @@ class DEXScanner:
             growing_pools,
             prefix='Growing pools',
             postfix=('', datetime.now().strftime('%d.%m.%Y, %H:%M:%S')),
-            age=True,
-            fdv=True,
-            volume=True,
-            liquidity=True,
-            transactions=True,
-            makers=True,
-            price_change=True,
-            buyers_sellers_change=True
         )
 
         if message:
@@ -302,17 +270,15 @@ class DEXScanner:
                             logger.error(f'Can\'t pin the main message - {id_str}')
                     else:
                         logger.error(f'Can\'t unpin all chat messages - {id_str}')
-                elif status == Status.BLOCK:
-                    self.users.remove_user(user.id)
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.users.clear_property(self.users.get_user(update.message.chat_id), Property.MAIN_MESSAGE_ID)
         await self.update_main_message()
 
     async def send_pump_notification(self):
-        pumped_pools = [p for p in self.pools if self.pool_score(p) > 25]
-        pumped_pools.sort(key=self.pool_score, reverse=True)
-        logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools)}')
+        pumped_pools_source = [p for p in self.pools if self.pool_score(p) > 25]
+        pumped_pools_source.sort(key=self.pool_score, reverse=True)
+        logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
         async def get_jetton_balances(user: User) -> list[JettonBalance] | None:
             try:
@@ -355,47 +321,23 @@ class DEXScanner:
 
             data.sort(key=lambda x: x[1], reverse=True)
             data = list(zip(*data))
-            wallet_pools_user, change = (data[0], data[1]) if data else ([], [])
-            pumped_pools_user = []
+            wallet_pools, change = (data[0], data[1]) if data else ([], [])
+            pumped_pools = []
 
-            for pool in pumped_pools:
+            for pool in pumped_pools_source:
                 notification = user.get_last_token_notification(pool.base_token)
 
-                if pool not in wallet_pools_user:
+                if pool not in wallet_pools:
                     if not notification.has_been_made() or notification.seconds_passed() > settings.NOTIFICATIONS_PUMP_COOLDOWN:
                         notification.make()
-                        pumped_pools_user.append(pool)
+                        pumped_pools.append(pool)
 
-            tickers = [p.base_token.ticker for p in [*pumped_pools_user, *wallet_pools_user]]
-            name = (', '.join(tickers), '') if len(tickers) > 1 else ''
-
+            pools = [*wallet_pools, *pumped_pools]
             message = pools_to_message(
-                wallet_pools_user,
-                prefix=name,
-                balance=[user.get_token_balance(p.base_token).calculate_balance() for p in wallet_pools_user],
-                change=change,
-                age=True,
-                fdv=True,
-                volume=True,
-                liquidity=True,
-                transactions=True,
-                makers=True,
-                price_change=True,
-                buyers_sellers_change=True
-            )
-
-            message = pools_to_message(
-                pumped_pools_user,
-                prefix=name if not wallet_pools_user else '',
-                message_before=message,
-                age=True,
-                fdv=True,
-                volume=True,
-                liquidity=True,
-                transactions=True,
-                makers=True,
-                price_change=True,
-                buyers_sellers_change=True
+                pools,
+                prefix=(', '.join([p.base_token.ticker for p in pools]), '') if len(pools) > 1 else None,
+                balance=[user.get_token_balance(p.base_token).calculate_balance() for p in wallet_pools] + [None] * len(pumped_pools),
+                change=change + [None] * len(pumped_pools),
             )
 
             if message:
@@ -427,7 +369,8 @@ class DEXScanner:
 
         except error.Forbidden as e:
             if str(e) == settings.TELEGRAM_FORBIDDEN_BLOCK:
-                logger.info(f'User blocked the bot')
+                logger.info(to_info(f'User blocked the bot, removing from the database'))
+                self.users.remove_user(user.id)
                 return None, Status.BLOCK
             else:
                 raise UnknownException(e)
