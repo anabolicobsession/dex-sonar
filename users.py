@@ -165,3 +165,6 @@ class Users:
 
     def mute_forever(self, user: User, token: Token):
         self._set_mute_until(user, token, None)
+
+    def unmute(self, user: User, token: Token):
+        self._set_mute_until(user, token, time.time())
