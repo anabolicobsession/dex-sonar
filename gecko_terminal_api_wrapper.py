@@ -43,13 +43,16 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
             response = None
 
             while not response:
+                sleep = 10
+
                 try:
                     response = request(network=settings.NETWORK, page=i)
                     self._increase_requests()
 
                 except KeyError as e:
                     logger.info(f'Request limit exceeded. Waiting for new resources')
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(sleep)
+                    sleep *= 1.5
 
                 except requests.ReadTimeout as e:
                     logger.info(f'{e}')

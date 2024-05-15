@@ -148,7 +148,12 @@ class Users:
 
     def is_muted(self, user: User, token: Token):
         indices = self._find_mutelists_indices(user, token)
-        return False if len(indices) == 0 else time.time() < self.mutelists.loc[indices.item()][_MutelistProperty.MUTE_UNTIL]
+
+        if len(indices) == 0:
+            return False
+        else:
+            mute_until = self.mutelists.loc[indices.item()][_MutelistProperty.MUTE_UNTIL]
+            return time.time() < mute_until if not pd.isna(mute_until) else True
 
     def _set_mute_until(self, user: User, token: Token, mute_until: Timestamp | None):
         indices = self._find_mutelists_indices(user, token)

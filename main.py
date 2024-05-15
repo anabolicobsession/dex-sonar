@@ -3,10 +3,10 @@ from collections.abc import Iterable
 import logging
 import time
 from asyncio import CancelledError
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum, auto
 
-from telegram import error, Bot, Update, Message, LinkPreviewOptions, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import error, Bot, Update, Message, LinkPreviewOptions, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Defaults, CallbackQueryHandler
 from telegram.ext.filters import UpdateFilter
@@ -186,6 +186,13 @@ class DEXScanner:
         self.geckoterminal_api = GeckoTerminalAPIWrapper(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
         self.ton_api = AsyncTonapi(api_key=settings.TON_API_KEY)
 
+        self.notification_reply_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton('1 day', callback_data='1'),
+            InlineKeyboardButton('3 days', callback_data='3'),
+            InlineKeyboardButton('1 week', callback_data='7'),
+            InlineKeyboardButton('Forever', callback_data='0'),
+        ]])
+
     def run(self):
         asyncio.run(self.run_event_loop())
 
@@ -198,6 +205,7 @@ class DEXScanner:
         application.add_handler(CommandHandler(settings.COMMAND_START, self.start, message_filter))
         application.add_handler(CommandHandler(settings.COMMAND_HELP, self.help, message_filter))
         application.add_handler(CommandHandler(settings.COMMAND_RESEND, self.resend, message_filter))
+        application.add_handler(CallbackQueryHandler(self.mute_button))
         await self.bot.set_my_commands(settings.COMMAND_MENU)
 
         async with application:
@@ -244,7 +252,7 @@ class DEXScanner:
             await asyncio.sleep(cooldown)
 
     async def update_main_message(self):
-        growing_pools = [p for p in self.pools if self.pool_score(p) > 10]
+        growing_pools = [p for p in self.pools if self.pool_score(p) > settings.GROWING_POOLS_MIN_SCORE]
         growing_pools.sort(key=self.pool_score, reverse=True)
         logger.info(f'Updating main message - Growing pools: {len(growing_pools)}')
 
@@ -276,7 +284,7 @@ class DEXScanner:
         await self.update_main_message()
 
     async def send_pump_notification(self):
-        pumped_pools_source = [p for p in self.pools if self.pool_score(p) > 10]
+        pumped_pools_source = [p for p in self.pools if self.pool_score(p) > settings.PUMPED_POOLS_MIN_SCORE]
         pumped_pools_source.sort(key=self.pool_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
@@ -331,33 +339,35 @@ class DEXScanner:
                         pumped_pools.append(pool)
 
             pools = [*wallet_pools, *pumped_pools]
-            message = pools_to_message(
-                pools,
-                prefix=(', '.join([p.base_token.ticker for p in pools]), '') if len(pools) > 1 else None,
-                balance=[user.get_token_balance(p.base_token).calculate_balance() for p in wallet_pools] + [None] * len(pumped_pools),
-                change=change + [None] * len(pumped_pools),
-            )
+            balances = [user.get_token_balance(p.base_token).calculate_balance() for p in wallet_pools] + [None] * len(pumped_pools)
+            changes = change + [None] * len(pumped_pools)
 
-            if message:
-                await self.send_message(message, user)
+            if pools:
+                for i, pool in enumerate(pools):
+                    message = pools_to_message(
+                        [pool],
+                        balance=[balances[i]],
+                        change=[changes[i]],
+                    )
+                    await self.send_message(message, user, reply_markup=self.notification_reply_markup)
 
     @staticmethod
     def pool_score(pool: Pool):
         return 3 * max(pool.price_change.m5 * 100, 0) + max(pool.price_change.h1 * 100, 0)
 
-    async def send_message(self, text, user: User, disable_notification=False) -> tuple[Message | None, Status]:
-        return await self.send_or_edit_message(text, user, disable_notification=disable_notification)
+    async def send_message(self, text, user: User, **kwargs) -> tuple[Message | None, Status]:
+        return await self.send_or_edit_message(text, user, **kwargs)
 
     async def edit_message(self, text, user: User, message_id: MessageID) -> tuple[Message | None, Status]:
         return await self.send_or_edit_message(text, user, message_id)
 
-    async def send_or_edit_message(self, text, user: User, message_id: MessageID = None, disable_notification=False) -> tuple[Message | None, Status]:
+    async def send_or_edit_message(self, text, user: User, message_id: MessageID = None, **kwargs) -> tuple[Message | None, Status]:
         def to_info(str, append=None):
             return f'{str} - Chat ID: {user.id}' + (f'/{message_id}' if message_id else '') + (f' - {append}' if append else '')
 
         try:
             if not message_id:
-                return await self.bot.send_message(user.id, text, disable_notification=disable_notification), Status.SUCCESS
+                return await self.bot.send_message(user.id, text, **kwargs), Status.SUCCESS
             else:
                 message = await self.bot.edit_message_text(text, user.id, message_id)
                 if isinstance(message, Message):
@@ -408,6 +418,25 @@ class DEXScanner:
         except error.TimedOut as e:
             logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id} - {e}')
             return False
+
+    def _parse_token(self, token_ticker: str) -> network.Token | None:
+        matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]
+        return matches[0] if len(matches) == 1 else None
+
+    async def mute_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        option = int(query.data)
+        user = self.users.get_user(query.message.chat.id)
+        token = self._parse_token(query.message.text.split(' ', 1)[0])
+
+        if option:
+            self.users.mute_for(user, token, timedelta(days=option).total_seconds())
+        else:
+            self.users.mute_forever(user, token)
+
+        await query.answer()
+        duration = f'for {option} day{"" if option == 1 else "s"}' if option else 'forever'
+        await query.edit_message_text(text=f'Successfully muted {token.ticker} {duration}')
 
 
 if __name__ == '__main__':
