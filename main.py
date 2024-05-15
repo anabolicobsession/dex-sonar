@@ -14,6 +14,7 @@ from aiogram import html
 from pytonapi import AsyncTonapi
 from pytonapi.schema.jettons import JettonBalance
 
+import network
 import settings
 import users
 from gecko_terminal_api_wrapper import GeckoTerminalAPIWrapper
@@ -194,8 +195,8 @@ class DEXScanner:
         self.bot = application.bot
 
         message_filter = FilterNotInBlacklist(self.blacklist) if settings._RUNNING_MODE else FilterOnlyFromID(settings.DEVELOPER_CHAT_ID)
-        application.add_handler(CommandHandler(settings.COMMAND_HELP, self.help, message_filter))
         application.add_handler(CommandHandler(settings.COMMAND_START, self.start, message_filter))
+        application.add_handler(CommandHandler(settings.COMMAND_HELP, self.help, message_filter))
         application.add_handler(CommandHandler(settings.COMMAND_RESEND, self.resend, message_filter))
         await self.bot.set_my_commands(settings.COMMAND_MENU)
 
@@ -212,10 +213,6 @@ class DEXScanner:
             await application.updater.stop()
             await application.stop()
 
-    @staticmethod
-    async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE)
-
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         id = update.message.chat_id
 
@@ -225,6 +222,10 @@ class DEXScanner:
             self.users.add_user(id)
 
         await update.message.reply_text(settings.COMMAND_START_MESSAGE)
+
+    @staticmethod
+    async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE)
 
     async def run_one_cycle(self):
         start_time = time.time()
@@ -255,27 +256,23 @@ class DEXScanner:
 
         if message:
             for user in self.users.get_users():
-                main_message_id = self.users.get_property_if_exists(user, Property.MAIN_MESSAGE_ID)
+                main_message_id = self.users.get_property(user, Property.MAIN_MESSAGE_ID)
                 sending = not bool(main_message_id)
-
                 message, status = await self.send_or_edit_message(message, user, message_id=main_message_id, disable_notification=True)
-                message_id = message.message_id
-                id_str = f'User ID: {user.id}/{message_id}'
 
                 match status:
                     case Status.SUCCESS:
                         if sending:
-                            if await self.bot.unpin_all_chat_messages(user.id):
+                            message_id = message.message_id
+                            id_str = f'User ID: {user.id}/{message_id}'
+                            await self.unpin_all_messages(user)
 
-                                if await self.bot.pin_chat_message(user.id, message_id, disable_notification=True):
-                                    self.users.set_property(user, Property.MAIN_MESSAGE_ID, message_id)
-                                else:
-                                    logger.error(f'Can\'t pin the main message - {id_str}')
+                            if await self.bot.pin_chat_message(user.id, message_id, disable_notification=True):
+                                self.users.set_property(user, Property.MAIN_MESSAGE_ID, message_id)
                             else:
-                                logger.error(f'Can\'t unpin all chat messages - {id_str}')
+                                logger.error(f'Can\'t pin the main message - {id_str}')
                     case Status.REMOVED:
                         self.users.clear_property(user, Property.MAIN_MESSAGE_ID)
-
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.users.clear_property(self.users.get_user(update.message.chat_id), Property.MAIN_MESSAGE_ID)
@@ -286,44 +283,45 @@ class DEXScanner:
         pumped_pools_source.sort(key=self.pool_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
-        async def get_jetton_balances(user: User) -> list[JettonBalance] | None:
+        async def get_jetton_balances(user: User, wallet: network.Address) -> list[JettonBalance] | None:
             try:
-                return (await self.ton_api.accounts.get_jettons_balances(self.users.get_property(user, Property.WALLET))).balances
+                return (await self.ton_api.accounts.get_jettons_balances(wallet)).balances
 
             except AttributeError as e:
-                logger.error(f'Exception occurred during using TON API - {user.id} - {e}')
+                logger.error(f'Exception occurred during using TON API - Chat ID: {user.id} - {e}')
                 return None
 
         for user in self.users.get_users():
             data = []
 
-            if self.users.has_property(user, Property.WALLET) and (jetton_balances := await get_jetton_balances(user)):
-                for x in jetton_balances:
-                    balance = int(x.balance)
-                    token = self.pools.get_token(x.jetton.address.to_userfriendly(is_bounceable=True))
-                    token_balance = user.get_token_balance(token)
+            if wallet := self.users.get_property(user, Property.WALLET):
+                if jetton_balances := await get_jetton_balances(user, wallet):
+                    for x in jetton_balances:
+                        balance = int(x.balance)
+                        token = self.pools.get_token(x.jetton.address.to_userfriendly(is_bounceable=True))
+                        token_balance = user.get_token_balance(token)
 
-                    if balance:
-                        if pool := self.pools.find_best_token_pool(token, key=lambda p: p.volume):
+                        if balance:
+                            if pool := self.pools.find_best_token_pool(token, key=lambda p: p.volume):
 
-                            if not token_balance:
-                                user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_currency))
-                                token.update(decimals=x.jetton.decimals)
-                            else:
-                                change = 1 - pool.price_in_native_currency / token_balance.rate
-                                notification = user.get_last_token_notification(token)
-
-                                if (
-                                        abs(change) > settings.NOTIFICATIONS_USER_WALLET_CHANGE_BOUND and
-                                        (not notification.has_been_made() or notification.seconds_passed() > settings.NOTIFICATIONS_PUMP_COOLDOWN)
-                                ):
-                                    notification.make()
-                                    data.append((pool, change))
-                                    token_balance.set(amount=balance, rate=pool.price_in_native_currency)
+                                if not token_balance:
+                                    user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_currency))
+                                    token.update(decimals=x.jetton.decimals)
                                 else:
-                                    token_balance.set(amount=balance)
-                    elif token_balance:
-                        user.remove_token_balance(token_balance)
+                                    change = 1 - pool.price_in_native_currency / token_balance.rate
+                                    notification = user.get_last_token_notification(token)
+
+                                    if (
+                                            abs(change) > settings.NOTIFICATIONS_USER_WALLET_CHANGE_BOUND and
+                                            (not notification.has_been_made() or notification.seconds_passed() > settings.NOTIFICATIONS_PUMP_COOLDOWN)
+                                    ):
+                                        notification.make()
+                                        data.append((pool, change))
+                                        token_balance.set(amount=balance, rate=pool.price_in_native_currency)
+                                    else:
+                                        token_balance.set(amount=balance)
+                        elif token_balance:
+                            user.remove_token_balance(token_balance)
 
             data.sort(key=lambda x: x[1], reverse=True)
             data = list(zip(*data))
@@ -361,7 +359,7 @@ class DEXScanner:
 
     async def send_or_edit_message(self, text, user: User, message_id: MessageID = None, disable_notification=False) -> tuple[Message | None, Status]:
         def to_info(str, append=None):
-            return f'{str} - Used ID: {user.id}' + (f'/{message_id}' if message_id else '') + (f' - {append}' if append else '')
+            return f'{str} - Chat ID: {user.id}' + (f'/{message_id}' if message_id else '') + (f' - {append}' if append else '')
 
         try:
             if not message_id:
@@ -400,6 +398,13 @@ class DEXScanner:
         except error.TimedOut as e:
             logging.warning(to_info(e))
             return None, Status.EXCEPTION
+
+    async def unpin_all_messages(self, user: User):
+        try:
+            if not await self.bot.unpin_all_chat_messages(user.id):
+                logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id}')
+        except error.TimedOut as e:
+            logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id} - {e}')
 
 
 if __name__ == '__main__':

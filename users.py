@@ -69,9 +69,12 @@ class Property(str, Enum):
 
 property_dtypes = {
     Property.ID: 'int',
-    Property.MAIN_MESSAGE_ID: 'int',
+    Property.MAIN_MESSAGE_ID: 'float',
     Property.WALLET: 'str',
 }
+
+
+properties_without_id = [Property.MAIN_MESSAGE_ID, Property.WALLET]
 
 
 class Users:
@@ -83,7 +86,7 @@ class Users:
         )
 
         if os.path.isfile(settings.DATABASES_PATH_USERS):
-            self.user_database = pd.read_csv(settings.DATABASES_PATH_USERS, index_col=0, dtype=property_dtypes).astype(object)
+            self.user_database = pd.read_csv(settings.DATABASES_PATH_USERS, index_col=0, dtype=property_dtypes)
 
             for id in self.user_database.index:
                 self.users[id] = User(id)
@@ -102,7 +105,7 @@ class Users:
 
     def add_user(self, id: Id):
         self.users[id] = User(id)
-        self.user_database.loc[id] = pd.NA
+        self.user_database.loc[id] = None, ''
         self._save_user_database_to_disk()
 
     def remove_user(self, id: Id):
@@ -115,14 +118,24 @@ class Users:
         self._save_user_database_to_disk()
 
     def clear_property(self, user: User, property: Property):
-        self.user_database.loc[user.id, property] = pd.NA
+        match property:
+            case Property.MAIN_MESSAGE_ID:
+                self.user_database.loc[user.id, property] = pd.NA
+            case Property.WALLET:
+                self.user_database.loc[user.id, property] = ''
         self._save_user_database_to_disk()
 
-    def has_property(self, user: User, property: Property):
-        return not pd.isna(self.user_database.loc[user.id, property])
+    def get_property(self, user: User, property: Property) -> Any | None:
+        cell = self.user_database.loc[user.id, property]
 
-    def get_property(self, user: User, property: Property):
-        return self.user_database.loc[user.id, property]
+        match property:
+            case Property.MAIN_MESSAGE_ID:
+                if pd.isna(cell):
+                    return None
+                else:
+                    return int(cell)
+            case Property.WALLET:
+                if pd.isna(cell):
+                    return None
 
-    def get_property_if_exists(self, user: User, property: Property) -> Any | None:
-        return self.user_database.loc[user.id, property] if self.has_property(user, property) else None
+        return cell
