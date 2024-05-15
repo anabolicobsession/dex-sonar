@@ -6,9 +6,9 @@ from asyncio import CancelledError
 from datetime import datetime
 from enum import Enum, auto
 
-from telegram import error, Bot, Update, Message, LinkPreviewOptions
+from telegram import error, Bot, Update, Message, LinkPreviewOptions, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Defaults
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Defaults, CallbackQueryHandler
 from telegram.ext.filters import UpdateFilter
 from aiogram import html
 from pytonapi import AsyncTonapi
@@ -132,15 +132,6 @@ def pools_to_message(
             format_number(pool.price, 4, 9, symbol='$', significant_figures=2)
         )
 
-        if balance and balance[i]: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
-        if change and change[i]: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
-        add_line('Age:', pool.creation_date.difference_to_pretty_str())
-        add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
-        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
-        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
-        add_line('Transactions:', str(round_to_significant_figures(pool.transactions, 2)))
-        add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
-
         m5 = format_number(pool.price_change.m5, 3, sign=True, percent=True, significant_figures=2)
         h1 = format_number(pool.price_change.h1, 4, sign=True, percent=True, significant_figures=2)
         h24 = format_number(pool.price_change.h24, 4, sign=True, percent=True, significant_figures=2)
@@ -150,6 +141,15 @@ def pools_to_message(
         h1 = format_number(round(pool.buyers_sellers_ratio.h1, 1), 4, 1)
         h24 = format_number(round(pool.buyers_sellers_ratio.h24, 1), 4, 1)
         add_line('Buyers/sellers:', f'{m5} {h1} {h24}')
+
+        if balance and balance[i]: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
+        if change and change[i]: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
+        add_line('Age:', pool.creation_date.difference_to_pretty_str())
+        add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
+        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
+        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
+        add_line('Transactions:', str(round_to_significant_figures(pool.transactions, 2)))
+        add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
 
         link_gecko = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK}/pools/{pool.address}')
         link_dex = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK}/{pool.address}')
@@ -262,15 +262,12 @@ class DEXScanner:
 
                 match status:
                     case Status.SUCCESS:
-                        if sending:
-                            message_id = message.message_id
-                            id_str = f'User ID: {user.id}/{message_id}'
-                            await self.unpin_all_messages(user)
 
-                            if await self.bot.pin_chat_message(user.id, message_id, disable_notification=True):
-                                self.users.set_property(user, Property.MAIN_MESSAGE_ID, message_id)
-                            else:
-                                logger.error(f'Can\'t pin the main message - {id_str}')
+                        if sending:
+                            await self.unpin_all_messages(user)
+                            if await self.pin_message(user, message.message_id, disable_notification=True):
+                                self.users.set_property(user, Property.MAIN_MESSAGE_ID, message.message_id)
+
                     case Status.REMOVED:
                         self.users.clear_property(user, Property.MAIN_MESSAGE_ID)
 
@@ -279,7 +276,7 @@ class DEXScanner:
         await self.update_main_message()
 
     async def send_pump_notification(self):
-        pumped_pools_source = [p for p in self.pools if self.pool_score(p) > 25]
+        pumped_pools_source = [p for p in self.pools if self.pool_score(p) > 10]
         pumped_pools_source.sort(key=self.pool_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
@@ -301,7 +298,7 @@ class DEXScanner:
                         token = self.pools.get_token(x.jetton.address.to_userfriendly(is_bounceable=True))
                         token_balance = user.get_token_balance(token)
 
-                        if balance:
+                        if balance and token:
                             if pool := self.pools.find_best_token_pool(token, key=lambda p: p.volume):
 
                                 if not token_balance:
@@ -309,13 +306,12 @@ class DEXScanner:
                                     token.update(decimals=x.jetton.decimals)
                                 else:
                                     change = 1 - pool.price_in_native_currency / token_balance.rate
-                                    notification = user.get_last_token_notification(token)
 
                                     if (
                                             abs(change) > settings.NOTIFICATIONS_USER_WALLET_CHANGE_BOUND and
-                                            (not notification.has_been_made() or notification.seconds_passed() > settings.NOTIFICATIONS_PUMP_COOLDOWN)
+                                            not self.users.is_muted(user, token)
                                     ):
-                                        notification.make()
+                                        self.users.mute_for(user, token, settings.NOTIFICATIONS_PUMP_COOLDOWN)
                                         data.append((pool, change))
                                         token_balance.set(amount=balance, rate=pool.price_in_native_currency)
                                     else:
@@ -329,11 +325,9 @@ class DEXScanner:
             pumped_pools = []
 
             for pool in pumped_pools_source:
-                notification = user.get_last_token_notification(pool.base_token)
-
                 if pool not in wallet_pools:
-                    if not notification.has_been_made() or notification.seconds_passed() > settings.NOTIFICATIONS_PUMP_COOLDOWN:
-                        notification.make()
+                    if not self.users.is_muted(user, pool.base_token):
+                        self.users.mute_for(user, pool.base_token, settings.NOTIFICATIONS_PUMP_COOLDOWN)
                         pumped_pools.append(pool)
 
             pools = [*wallet_pools, *pumped_pools]
@@ -386,25 +380,34 @@ class DEXScanner:
 
             elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
                 logger.error(to_info(e))
+                return None, Status.EXCEPTION
 
             elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG:
                 logger.error(to_info(e, f'{len(clear_from_html(text))} chars'))
+                return None, Status.EXCEPTION
 
             else:
                 raise UnknownException(e)
-
-            return None, Status.EXCEPTION
 
         except error.TimedOut as e:
             logging.warning(to_info(e))
             return None, Status.EXCEPTION
 
-    async def unpin_all_messages(self, user: User):
+    async def pin_message(self, user: User, message_id: MessageID, disable_notification=False) -> bool:
+        if not await self.bot.pin_chat_message(user.id, message_id, disable_notification=disable_notification):
+            logger.error(f'Can\'t pin the main message - Chat ID: {user.id}/{message_id}')
+            return False
+        return True
+
+    async def unpin_all_messages(self, user: User) -> bool:
         try:
             if not await self.bot.unpin_all_chat_messages(user.id):
                 logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id}')
+                return False
+            return True
         except error.TimedOut as e:
             logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id} - {e}')
+            return False
 
 
 if __name__ == '__main__':
