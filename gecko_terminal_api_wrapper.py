@@ -5,6 +5,7 @@ from typing import Callable
 
 import geckoterminal_api
 import requests.exceptions
+from geckoterminal_api import GeckoTerminalAPIError
 
 import settings
 from utils import Datetime
@@ -41,21 +42,25 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
                 break
 
             response = None
-
+            sleep = 10
             while not response:
-                sleep = 10
-
                 try:
                     response = request(network=settings.NETWORK, page=i)
-                    self._increase_requests()
 
                 except KeyError as e:
-                    logger.info(f'Request limit exceeded. Waiting for new resources')
-                    await asyncio.sleep(sleep)
-                    sleep *= 1.5
+                    logger.info(f'Request limit exceeded')
 
                 except requests.ReadTimeout as e:
-                    logger.info(f'{e}')
+                    logger.warning(f'{e}')
+
+                except GeckoTerminalAPIError as e:
+                    logger.warning(e)
+
+                if not response:
+                    logger.info(f'Sleeping for {sleep}s')
+                    await asyncio.sleep(sleep)
+                    sleep *= 1.5
+            self._increase_requests()
 
             if response['data']:
                 data = data | {x['id']: x for x in response['data']}

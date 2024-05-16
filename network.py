@@ -141,15 +141,18 @@ class Pools:
 
         if not self.pool_filter or self.pool_filter(pool):
             if self.repeated_pool_filter_key:
-                same_pool = None
+                pool_with_same_token = None
 
                 for p in self.pools:
-                    if p.address == pool.address:
-                        same_pool = p
+                    if p.base_token == pool.base_token:
+                        pool_with_same_token = p
                         break
 
-                if same_pool and not self.repeated_pool_filter_key(pool) > self.repeated_pool_filter_key(same_pool):
-                    return
+                if pool_with_same_token:
+                    if self.repeated_pool_filter_key(pool) > self.repeated_pool_filter_key(pool_with_same_token):
+                        self.pools.remove(pool_with_same_token)
+                    else:
+                        return
 
             self.pools.append(pool)
             self.tokens[pool.base_token.address] = pool.base_token

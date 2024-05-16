@@ -253,13 +253,14 @@ class DEXScanner:
         logger.info(f'Updating main message - Growing pools: {len(growing_pools)}')
 
         for user in self.users.get_users():
+            user_pools = [p for p in growing_pools if not self.users.is_muted(user, p.base_token)]
             message = pools_to_message(
-                [p for p in growing_pools if not self.users.is_muted(user, p.base_token)],
+                user_pools,
                 prefix='Growing pools',
                 postfix=('', datetime.now().strftime('%d.%m.%Y, %H:%M:%S')),
             )
 
-            if message:
+            if user_pools:
                 main_message_id = self.users.get_property(user, Property.MAIN_MESSAGE_ID)
                 sending = not bool(main_message_id)
                 message, status = await self.send_or_edit_message(message, user, message_id=main_message_id, disable_notification=True)
@@ -312,10 +313,10 @@ class DEXScanner:
                                     change = 1 - pool.price_in_native_currency / token_balance.rate
 
                                     if (
-                                            abs(change) > settings.NOTIFICATIONS_USER_WALLET_CHANGE_BOUND and
+                                            abs(change) > settings.NOTIFICATION_USER_WALLET_CHANGE_BOUND and
                                             not self.users.is_muted(user, token)
                                     ):
-                                        self.users.mute_for(user, token, settings.NOTIFICATIONS_PUMP_COOLDOWN)
+                                        self.users.mute_for(user, token, settings.NOTIFICATION_COOLDOWN_WALLET)
                                         data.append((pool, change))
                                         token_balance.set(amount=balance, rate=pool.price_in_native_currency)
                                     else:
@@ -331,7 +332,7 @@ class DEXScanner:
             for pool in pumped_pools_source:
                 if pool not in wallet_pools:
                     if not self.users.is_muted(user, pool.base_token):
-                        self.users.mute_for(user, pool.base_token, settings.NOTIFICATIONS_PUMP_COOLDOWN)
+                        self.users.mute_for(user, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
                         pumped_pools.append(pool)
 
             pools = [*wallet_pools, *pumped_pools]
@@ -399,8 +400,8 @@ class DEXScanner:
             logging.warning(to_info(e))
             return None, Status.EXCEPTION
 
-    async def pin_message(self, user: User, message_id: MessageID, disable_notification=False) -> bool:
-        if not await self.bot.pin_chat_message(user.id, message_id, disable_notification=disable_notification):
+    async def pin_message(self, user: User, message_id: MessageID, **kwargs) -> bool:
+        if not await self.bot.pin_chat_message(user.id, message_id, **kwargs):
             logger.error(f'Can\'t pin the main message - Chat ID: {user.id}/{message_id}')
             return False
         return True
@@ -417,6 +418,12 @@ class DEXScanner:
 
     def _parse_token(self, token_ticker: str) -> network.Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]
+
+        if len(matches) == 0:
+            logger.warning(f'There is no {token_ticker} token')
+        elif len(matches) > 1:
+            logger.warning(f'There are multiple tokens with ticker {token_ticker}')
+
         return matches[0] if len(matches) == 1 else None
 
     async def buttons_mute(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,8 +434,8 @@ class DEXScanner:
         await query.answer()
 
         if not token:
-            logger.warning(f'Can\'t mute/unmute token: {token.address if token else "None"}')
-            await self.send_message('Sorry, unable to do this action in the current program version', user, disable_notifications=True)
+            await self.send_message('Sorry, unable to do this action in the current program version', user, disable_notification=True)
+            return
 
         if option:
             if option > 0:
