@@ -23,6 +23,7 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
         self.MAX_PAGES = geckoterminal_api.limits.MAX_PAGE
         self.MAX_REQUESTS = max_requests
         self.requests = None
+        self.cooldown = None
 
     def _has_requests(self):
         return self.requests < self.MAX_REQUESTS
@@ -36,13 +37,13 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
     async def _request_data(self, request: Callable) -> tuple[dict, dict]:
         data = {}
         included = {}
+        sleep = 10
 
         for i in range(1, self.MAX_PAGES + 1):
             if not self._has_requests():
                 break
 
             response = None
-            sleep = 10
             while not response:
                 try:
                     response = request(network=settings.NETWORK, page=i)
@@ -57,9 +58,9 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
                     logger.warning(e)
 
                 if not response:
-                    logger.info(f'Sleeping for {sleep}s')
-                    await asyncio.sleep(sleep)
-                    sleep *= 1.5
+                    logger.info(f'Sleeping for {self.cooldown:.0f}s')
+                    await asyncio.sleep(self.cooldown)
+                    self.cooldown *= 1.3
             self._increase_requests()
 
             if response['data']:
@@ -72,6 +73,7 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
 
     async def update_pools(self, pools: Pools):
         self._clear_requests()
+        self.cooldown = 10
 
         data, included = await self._request_data(self.network_pools)
         new_data, new_included = await self._request_data(self.network_new_pools)
@@ -114,6 +116,10 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
             buyers_h1, sellers_h1 = int(transactions['h1']['buyers']), int(transactions['h1']['sellers'])
             buyers_h24, sellers_h24 = int(transactions['h24']['buyers']), int(transactions['h24']['sellers'])
 
+            if not x['base_token_price_native_currency']:
+                logger.warning(f"Base token price native currency not set - {tokens[x['base_token']['data']['id'].split('_', 1)[1]]}/{float(x['volume_usd']['h24'])}")
+                continue
+
             pools.update_pool(
                 x['address'],
                 base_token=tokens[x['base_token']['data']['id'].split('_', 1)[1]],
@@ -127,7 +133,7 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
                 liquidity=float(x['reserve_in_usd']),
                 transactions=buys_h24 + sells_h24,
                 makers=round(mean([buyers_h24, sellers_h24])),
-                transactions_per_wallet=(buyers_h24 * (buys_h24 / buyers_h24 if buyers_h24 else 0) + sellers_h24 * (sells_h24 / sellers_h24 if sellers_h24 else 0)) / (buyers_h24 + sellers_h24 if buyers_h24 or sellers_h24 else 0),
+                transactions_per_wallet=(buyers_h24 * (buys_h24 / buyers_h24 if buyers_h24 else 0) + sellers_h24 * (sells_h24 / sellers_h24 if sellers_h24 else 0)) / (buyers_h24 + sellers_h24 if buyers_h24 or sellers_h24 else 1),
                 price_change=TimeData(float(price_change['m5']) / 100, float(price_change['h1']) / 100, float(price_change['h24']) / 100),
                 buys_sells_ratio=TimeData(
                     buys_m5 / sells_m5 if buys_m5 and sells_m5 else 1,

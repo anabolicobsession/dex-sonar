@@ -28,7 +28,8 @@ POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
     p.liquidity > 3000 and
-    p.volume > 5000
+    p.volume > 5000 and
+    p.makers > 30
 )
 
 GROWING_POOLS_MIN_SCORE = 10
@@ -82,3 +83,4 @@ TELEGRAM_FORBIDDEN_BLOCK = 'Forbidden: bot was blocked by the user'
 TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG = 'Message is too long'
 TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED = 'Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message'
 TELEGRAM_MESSAGE_TO_EDIT_NOT_FOUND = 'Message to edit not found'
+TELEGRAM_CHAT_NOT_FOUND = 'Chat not found'

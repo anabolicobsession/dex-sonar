@@ -132,6 +132,9 @@ def pools_to_message(
             format_number(pool.price, 4, 9, symbol='$', significant_figures=2)
         )
 
+        if balance and balance[i]: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
+        if change and change[i]: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
+
         m5 = format_number(pool.price_change.m5, 3, sign=True, percent=True, significant_figures=2)
         h1 = format_number(pool.price_change.h1, 4, sign=True, percent=True, significant_figures=2)
         h24 = format_number(pool.price_change.h24, 4, sign=True, percent=True, significant_figures=2)
@@ -142,8 +145,6 @@ def pools_to_message(
         h24 = format_number(round(pool.buyers_sellers_ratio.h24, 1), 4, 1)
         add_line('Buyers/sellers:', f'{m5} {h1} {h24}')
 
-        if balance and balance[i]: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
-        if change and change[i]: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
         add_line('Age:', pool.creation_date.difference_to_pretty_str())
         add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
@@ -310,7 +311,7 @@ class DEXScanner:
                                     user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_currency))
                                     token.update(decimals=x.jetton.decimals)
                                 else:
-                                    change = 1 - pool.price_in_native_currency / token_balance.rate
+                                    change = pool.price_in_native_currency / token_balance.rate - 1
 
                                     if (
                                             abs(change) > settings.NOTIFICATION_USER_WALLET_CHANGE_BOUND and
@@ -326,7 +327,7 @@ class DEXScanner:
 
             data.sort(key=lambda x: x[1], reverse=True)
             data = list(zip(*data))
-            wallet_pools, change = (data[0], data[1]) if data else ([], [])
+            wallet_pools, change = (list(data[0]), list(data[1])) if data else ([], [])
             pumped_pools = []
 
             for pool in pumped_pools_source:
@@ -381,20 +382,25 @@ class DEXScanner:
                 raise UnknownException(e)
 
         except error.BadRequest as e:
-            if str(e) == settings.TELEGRAM_MESSAGE_TO_EDIT_NOT_FOUND:
-                logger.warning(to_info(e))
-                return None, Status.REMOVED
+            match str(e):
+                case settings.TELEGRAM_MESSAGE_TO_EDIT_NOT_FOUND:
+                    logger.warning(to_info(e))
+                    return None, Status.REMOVED
 
-            elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
-                logger.error(to_info(e))
-                return None, Status.EXCEPTION
+                case settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
+                    logger.error(to_info(e))
+                    return None, Status.EXCEPTION
 
-            elif str(e) == settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG:
-                logger.error(to_info(e, f'{len(clear_from_html(text))} chars'))
-                return None, Status.EXCEPTION
+                case settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG:
+                    logger.error(to_info(e, f'{len(clear_from_html(text))} chars'))
+                    return None, Status.EXCEPTION
 
-            else:
-                raise UnknownException(e)
+                case settings.TELEGRAM_CHAT_NOT_FOUND:
+                    logger.warning(to_info(e))
+                    return None, Status.EXCEPTION
+
+                case _:
+                    raise UnknownException(e)
 
         except error.TimedOut as e:
             logging.warning(to_info(e))
@@ -422,9 +428,9 @@ class DEXScanner:
         if len(matches) == 0:
             logger.warning(f'There is no {token_ticker} token')
         elif len(matches) > 1:
-            logger.warning(f'There are multiple tokens with ticker {token_ticker}')
+            logger.warning(f'There are multiple tokens with ticker {token_ticker}, picking the first one')
 
-        return matches[0] if len(matches) == 1 else None
+        return matches[0] if len(matches) >= 1 else None
 
     async def buttons_mute(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
