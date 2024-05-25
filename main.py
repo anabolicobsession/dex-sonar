@@ -3,12 +3,12 @@ from collections.abc import Iterable
 import logging
 import time
 from asyncio import CancelledError
-from datetime import datetime, timedelta
+from datetime import timedelta
 from enum import Enum, auto
 
-from telegram import error, Bot, Update, Message, LinkPreviewOptions, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from telegram import error, Bot, Update, Message, LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Defaults, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQueryHandler, CommandHandler
 from telegram.ext.filters import UpdateFilter
 from aiogram import html
 from pytonapi import AsyncTonapi
@@ -49,45 +49,6 @@ logging.getLogger('httpcore.connection').setLevel(logging.INFO)
 
 
 MessageID = int
-
-
-class Status(Enum):
-    SUCCESS = auto()
-    REMOVED = auto()
-    BLOCK = auto()
-    EXCEPTION = auto()
-
-
-class ImpossibleAction(Exception): pass
-
-
-class UnknownException(Exception): pass
-
-
-class FilterOnlyFromID(UpdateFilter):
-    def __init__(self, id: users.Id):
-        super().__init__()
-        self.id = id
-
-    def filter(self, update: Update):
-        if update.message.chat_id != self.id:
-            user = update.message.from_user
-            logger.warning(f'Someone else\'s is trying to use the bot: {user.id}/{user.username}/{user.full_name} - Message: {update.message.text}')
-            return False
-        return True
-
-
-class FilterNotInBlacklist(UpdateFilter):
-    def __init__(self, blacklist: set[users.Id]):
-        super().__init__()
-        self.blacklist = blacklist
-
-    def filter(self, update: Update):
-        if update.message.chat_id in self.blacklist:
-            user = update.message.from_user
-            logger.warning(f'Someone from blacklist is trying to use the bot: {user.id}/{user.username}/{user.full_name} - Message: {update.message.text}')
-            return False
-        return True
 
 
 def pools_to_message(
@@ -171,12 +132,37 @@ def pools_to_message(
     return get_full_message(message_pools)
 
 
+class Status(Enum):
+    SUCCESS = auto()
+    REMOVED = auto()
+    BLOCK = auto()
+    EXCEPTION = auto()
+
+
+class ImpossibleAction(Exception): pass
+
+
+class UnknownException(Exception): pass
+
+
+class FilterWhitelist(UpdateFilter):
+    def __init__(self, whitelist: set[users.Id]):
+        super().__init__()
+        self.whitelist = whitelist
+
+    def filter(self, update: Update):
+        if update.message.chat_id not in self.whitelist:
+            user = update.message.from_user
+            logger.warning(f'Someone else\'s is trying to use the bot: {user.id}/{user.username}/{user.full_name} - Message: {update.message.text}')
+            return False
+        return True
+
+
 class TONSonar:
     def __init__(self):
         self.bot: Bot | None = None
         self.pools = Pools(pool_filter=settings.POOL_DEFAULT_FILTER, repeated_pool_filter_key=lambda p: p.volume)
         self.users: Users = Users()
-        self.blacklist: set[users.Id] = settings.BLACKLIST_CHAT_ID
         self.geckoterminal_api = GeckoTerminalAPIWrapper(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
         self.ton_api = AsyncTonapi(api_key=settings.TON_API_KEY)
 
@@ -198,12 +184,8 @@ class TONSonar:
         application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).defaults(defaults).build()
         self.bot = application.bot
 
-        message_filter = FilterNotInBlacklist(self.blacklist) if settings._RUNNING_MODE else FilterOnlyFromID(settings.DEVELOPER_CHAT_ID)
-        application.add_handler(CommandHandler(settings.COMMAND_START, self.start, message_filter))
-        application.add_handler(CommandHandler(settings.COMMAND_HELP, self.help, message_filter))
-        application.add_handler(CommandHandler(settings.COMMAND_RESEND, self.resend, message_filter))
+        application.add_handler(CommandHandler(settings.COMMAND_START, self.start, FilterWhitelist(settings.WHITELIST_ID)))
         application.add_handler(CallbackQueryHandler(self.buttons_mute))
-        await self.bot.set_my_commands(settings.COMMAND_MENU)
 
         async with application:
             await application.start()
@@ -228,10 +210,6 @@ class TONSonar:
 
         await update.message.reply_text(settings.COMMAND_START_MESSAGE)
 
-    @staticmethod
-    async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(settings.COMMAND_HELP_MESSAGE)
-
     async def run_one_cycle(self):
         start_time = time.time()
 
@@ -240,46 +218,12 @@ class TONSonar:
         await self.geckoterminal_api.update_pools(self.pools)
         logger.info(f'Pools: {len(self.pools)}, Tokens: {len(self.pools.get_tokens())}')
 
-        await self.update_main_message()
         await self.send_pump_notification()
 
         cooldown = settings.UPDATES_COOLDOWN - (time.time() - start_time)
         if cooldown > 0:
             logger.info(f'Going to asynchronous sleep - {cooldown:.0f}s')
             await asyncio.sleep(cooldown)
-
-    async def update_main_message(self):
-        growing_pools = [p for p in self.pools if self.pool_score(p) > settings.GROWING_POOLS_MIN_SCORE]
-        growing_pools.sort(key=self.pool_score, reverse=True)
-        logger.info(f'Updating main message - Growing pools: {len(growing_pools)}')
-
-        for user in self.users.get_users():
-            user_pools = [p for p in growing_pools if not self.users.is_muted(user, p.base_token)]
-            message = pools_to_message(
-                user_pools,
-                prefix='Growing pools',
-                postfix=('', datetime.now().strftime('%d.%m.%Y, %H:%M:%S')),
-            )
-
-            if user_pools:
-                main_message_id = self.users.get_property(user, Property.MAIN_MESSAGE_ID)
-                sending = not bool(main_message_id)
-                message, status = await self.send_or_edit_message(message, user, message_id=main_message_id, disable_notification=True)
-
-                match status:
-                    case Status.SUCCESS:
-
-                        if sending:
-                            await self.unpin_all_messages(user)
-                            if await self.pin_message(user, message.message_id, disable_notification=True):
-                                self.users.set_property(user, Property.MAIN_MESSAGE_ID, message.message_id)
-
-                    case Status.REMOVED:
-                        self.users.clear_property(user, Property.MAIN_MESSAGE_ID)
-
-    async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self.users.clear_property(self.users.get_user(update.message.chat_id), Property.MAIN_MESSAGE_ID)
-        await self.update_main_message()
 
     async def send_pump_notification(self):
         pumped_pools_source = [p for p in self.pools if self.pool_score(p) > settings.PUMPED_POOLS_MIN_SCORE]
@@ -354,24 +298,11 @@ class TONSonar:
         return 3 * max(pool.price_change.m5 * 100, 0) + max(pool.price_change.h1 * 100, 0)
 
     async def send_message(self, text, user: User, **kwargs) -> tuple[Message | None, Status]:
-        return await self.send_or_edit_message(text, user, **kwargs)
-
-    async def edit_message(self, text, user: User, message_id: MessageID) -> tuple[Message | None, Status]:
-        return await self.send_or_edit_message(text, user, message_id)
-
-    async def send_or_edit_message(self, text, user: User, message_id: MessageID = None, **kwargs) -> tuple[Message | None, Status]:
         def to_info(str, append=None):
-            return f'{str} - Chat ID: {user.id}' + (f'/{message_id}' if message_id else '') + (f' - {append}' if append else '')
+            return f'{str} - Chat ID: {user.id}' + (f' - {append}' if append else '')
 
         try:
-            if not message_id:
-                return await self.bot.send_message(user.id, text, **kwargs), Status.SUCCESS
-            else:
-                message = await self.bot.edit_message_text(text, user.id, message_id)
-                if isinstance(message, Message):
-                    return message, Status.SUCCESS
-                else:
-                    raise ImpossibleAction(to_info('You can\'t edit an inline message'))
+            return await self.bot.send_message(user.id, text, **kwargs), Status.SUCCESS
 
         except error.Forbidden as e:
             if str(e) == settings.TELEGRAM_FORBIDDEN_BLOCK:
@@ -405,22 +336,6 @@ class TONSonar:
         except error.TimedOut as e:
             logging.warning(to_info(e))
             return None, Status.EXCEPTION
-
-    async def pin_message(self, user: User, message_id: MessageID, **kwargs) -> bool:
-        if not await self.bot.pin_chat_message(user.id, message_id, **kwargs):
-            logger.error(f'Can\'t pin the main message - Chat ID: {user.id}/{message_id}')
-            return False
-        return True
-
-    async def unpin_all_messages(self, user: User) -> bool:
-        try:
-            if not await self.bot.unpin_all_chat_messages(user.id):
-                logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id}')
-                return False
-            return True
-        except error.TimedOut as e:
-            logger.error(f'Can\'t unpin all chat messages - Chat ID: {user.id} - {e}')
-            return False
 
     def _parse_token(self, token_ticker: str) -> network.Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]

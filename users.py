@@ -44,18 +44,16 @@ class User:
 
 class Property(str, Enum):
     ID = 'id'
-    MAIN_MESSAGE_ID = 'main_message_id'
     WALLET = 'wallet'
 
 
 property_dtypes = {
     Property.ID: 'int',
-    Property.MAIN_MESSAGE_ID: 'float',
     Property.WALLET: 'str',
 }
 
 
-properties_without_id = [Property.MAIN_MESSAGE_ID, Property.WALLET]
+properties_without_id = [Property.WALLET]
 
 class _MutelistProperty(str, Enum):
     ID = Property.ID
@@ -104,7 +102,7 @@ class Users:
 
     def add_user(self, id: Id):
         self.users[id] = User(id)
-        self.user_database.loc[id] = None, ''
+        self.set_property(self.users[id], Property.WALLET, '')
         self._save_user_database_to_disk()
 
     def remove_user(self, id: Id):
@@ -118,8 +116,6 @@ class Users:
 
     def clear_property(self, user: User, property: Property):
         match property:
-            case Property.MAIN_MESSAGE_ID:
-                self.user_database.loc[user.id, property] = pd.NA
             case Property.WALLET:
                 self.user_database.loc[user.id, property] = ''
 
@@ -129,11 +125,6 @@ class Users:
         cell = self.user_database.loc[user.id, property]
 
         match property:
-            case Property.MAIN_MESSAGE_ID:
-                if pd.isna(cell):
-                    return None
-                else:
-                    return int(cell)
             case Property.WALLET:
                 if pd.isna(cell):
                     return None
