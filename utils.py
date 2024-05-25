@@ -1,4 +1,3 @@
-import os
 import re
 from enum import Enum, auto
 from math import floor, log10

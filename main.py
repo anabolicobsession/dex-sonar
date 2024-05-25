@@ -226,8 +226,8 @@ class TONSonar:
             await asyncio.sleep(cooldown)
 
     async def send_pump_notification(self):
-        pumped_pools_source = [p for p in self.pools if self.pool_score(p) > settings.PUMPED_POOLS_MIN_SCORE]
-        pumped_pools_source.sort(key=self.pool_score, reverse=True)
+        pumped_pools_source = [p for p in self.pools if settings.is_pumped_pool(p)]
+        pumped_pools_source.sort(key=settings.calculate_pool_growth_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
         async def get_jetton_balances(user: User, wallet: network.Address) -> list[JettonBalance] | None:
@@ -292,10 +292,6 @@ class TONSonar:
                         change=[changes[i]],
                     )
                     await self.send_message(message, user, reply_markup=self.reply_markup_mute)
-
-    @staticmethod
-    def pool_score(pool: Pool):
-        return 3 * max(pool.price_change.m5 * 100, 0) + max(pool.price_change.h1 * 100, 0)
 
     async def send_message(self, text, user: User, **kwargs) -> tuple[Message | None, Status]:
         def to_info(str, append=None):

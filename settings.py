@@ -16,7 +16,7 @@ WHITELIST_ID = {int(os.environ.get('DEVELOPER_TELEGRAM_ID'))}
 NETWORK = 'ton'
 NETWORK_NATIVE_CURRENCY_ADDRESS = 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c'
 
-UPDATES_COOLDOWN = _get_time(minutes=1, seconds=30) if _PRODUCTION_MODE else _get_time(seconds=10)
+UPDATES_COOLDOWN = _get_time(minutes=2) if _PRODUCTION_MODE else _get_time(seconds=10)
 GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE = 25 if _PRODUCTION_MODE else 3
 
 NOTIFICATION_PUMP_COOLDOWN = _get_time(hours=2) if _PRODUCTION_MODE else _get_time(minutes=1)
@@ -27,12 +27,22 @@ NOTIFICATION_COOLDOWN_WALLET = _get_time(minutes=10)
 POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
-    p.liquidity > 3000 and
-    p.volume > 5000 and
-    p.makers > 30
+    p.liquidity > 10_000
 )
 
-PUMPED_POOLS_MIN_SCORE = 25 if _PRODUCTION_MODE else 10
+PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 5
+PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 12 if _PRODUCTION_MODE else PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY
+LIQUIDITY_BOUND = 50_000
+
+
+def calculate_pool_growth_score(p):
+    return (2 * p.price_change.m5 + p.price_change.h1) * 100
+
+
+def is_pumped_pool(p):
+    score = calculate_pool_growth_score(p)
+    return score > PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY if p.liquidity > LIQUIDITY_BOUND else score > PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY
+
 
 TELEGRAM_MESSAGE_MAX_LEN = 3700
 TELEGRAM_MESSAGE_MAX_WIDTH = 36
