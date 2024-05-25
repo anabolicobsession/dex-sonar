@@ -171,7 +171,7 @@ def pools_to_message(
     return get_full_message(message_pools)
 
 
-class DEXScanner:
+class TONSonar:
     def __init__(self):
         self.bot: Bot | None = None
         self.pools = Pools(pool_filter=settings.POOL_DEFAULT_FILTER, repeated_pool_filter_key=lambda p: p.volume)
@@ -457,4 +457,4 @@ class DEXScanner:
 
 
 if __name__ == '__main__':
-    DEXScanner().run()
+    TONSonar().run()
