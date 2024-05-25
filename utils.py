@@ -8,8 +8,11 @@ import pytz
 
 
 def round_to_significant_figures(x, n=1):
-    r = -int(floor(log10(abs(x)))) + (n - 1)
-    return round(x, r) if r > 0 else int(round(x, r))
+    if x:
+        r = -int(floor(log10(abs(x)))) + (n - 1)
+        return round(x, r) if r > 0 else int(round(x, r))
+    else:
+        return x
 
 
 def format_number(
