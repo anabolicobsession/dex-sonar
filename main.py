@@ -60,7 +60,7 @@ def pools_to_message(
         line_width=settings.TELEGRAM_MESSAGE_MAX_WIDTH,
         message_max_length=settings.TELEGRAM_MESSAGE_MAX_LEN,
 ):
-    message_pools = ''
+    pool_message = ''
 
     def spaces(n):
         return ' ' * n
@@ -77,10 +77,10 @@ def pools_to_message(
     prefix, postfix = fit_prefix_or_postfix(prefix), fit_prefix_or_postfix(postfix)
 
     def get_updated_message_pools(message_pool):
-        return message_pools + ('\n\n' if message_pools else '') + message_pool
+        return pool_message + ('\n\n' if pool_message else '') + message_pool
 
-    def get_full_message(message_pools):
-        return '\n\n'.join(filter(bool, [prefix, message_pools, postfix]))
+    def get_full_message(pool_message):
+        return '\n\n'.join(filter(bool, [prefix, pool_message, postfix]))
 
     def add_line(str1, str2):
         lines.append(f'{str1}{spaces(line_width - (len(str1) + len(str2)))}{str2}')
@@ -104,32 +104,27 @@ def pools_to_message(
         m5 = format_number(round(pool.buyers_sellers_ratio.m5, 1), 4, 1)
         h1 = format_number(round(pool.buyers_sellers_ratio.h1, 1), 4, 1)
         h24 = format_number(round(pool.buyers_sellers_ratio.h24, 1), 4, 1)
-        add_line('Buyers/sellers:', f'{m5} {h1} {h24}')
+        add_line('Buyers/Sellers:', f'{m5} {h1} {h24}')
 
-        add_line('Age:', pool.creation_date.difference_to_pretty_str())
-        add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
-        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
         add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
-        add_line('Transactions:', str(round_to_significant_figures(pool.transactions, 2)))
+        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
+        add_line('FDV/Liquidity:', format_number(round(pool.fdv / pool.liquidity, 1), 3, 1))
+        add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
         add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
+        add_line('Age:', pool.creation_date.difference_to_pretty_str())
 
-        link_gecko = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK}/pools/{pool.address}')
         link_dex = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK}/{pool.address}')
-        if pool.dex.id == 'dedust':
-            links_between_width = line_width - 22
-            links = link_dex + html.code(spaces(links_between_width)) + link_gecko
-        else:
-            links = spaces(1) + html.code(spaces(10 + (line_width - 22))) + link_gecko
+        link_gecko = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK}/pools/{pool.address}')
+        links = link_gecko + html.code(spaces(line_width - 22)) + link_dex
 
-        message_pool = html.code('\n'.join(lines)) + '\n' + links
-        new_message_pools = get_updated_message_pools(message_pool)
+        new_pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links)
 
-        if len(clear_from_html(get_full_message(new_message_pools))) <= message_max_length:
-            message_pools = new_message_pools
+        if len(clear_from_html(get_full_message(new_pool_message))) <= message_max_length:
+            pool_message = new_pool_message
         else:
             break
 
-    return get_full_message(message_pools)
+    return get_full_message(pool_message)
 
 
 class Status(Enum):
@@ -184,7 +179,8 @@ class TONSonar:
         application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).defaults(defaults).build()
         self.bot = application.bot
 
-        application.add_handler(CommandHandler(settings.COMMAND_START, self.start, FilterWhitelist(settings.WHITELIST_ID)))
+        message_filter = FilterWhitelist(settings.WHITELIST_CHAT_ID if settings.PRODUCTION_MODE else [settings.DEVELOPER_CHAT_ID])
+        application.add_handler(CommandHandler('start', self.start, message_filter))
         application.add_handler(CallbackQueryHandler(self.buttons_mute))
 
         async with application:
@@ -207,8 +203,9 @@ class TONSonar:
             user = update.message.from_user
             logger.warning(f'New user started the bot: {user.id}/{user.username}/{user.full_name}')
             self.users.add_user(id)
-
-        await update.message.reply_text(settings.COMMAND_START_MESSAGE)
+            await update.message.reply_text('You\'ve already subscribed')
+        else:
+            await update.message.reply_text('You\'ve subscribed to growing pool updates')
 
     async def run_one_cycle(self):
         start_time = time.time()
