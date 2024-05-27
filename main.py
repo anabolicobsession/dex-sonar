@@ -3,7 +3,7 @@ from collections.abc import Iterable
 import logging
 import time
 from asyncio import CancelledError
-from datetime import timedelta
+from datetime import timedelta, datetime
 from enum import Enum, auto
 
 from telegram import error, Bot, Update, Message, LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup
@@ -216,6 +216,7 @@ class TONSonar:
         logger.info(f'Pools: {len(self.pools)}, Tokens: {len(self.pools.get_tokens())}')
 
         await self.send_pump_notification()
+        await self.bot.set_my_short_description(f'Last update: {datetime.now().strftime("%I:%M %p")}')
 
         cooldown = settings.UPDATES_COOLDOWN - (time.time() - start_time)
         if cooldown > 0:
