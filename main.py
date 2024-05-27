@@ -17,7 +17,7 @@ from pytonapi.schema.jettons import JettonBalance
 import network
 import settings
 import users
-from gecko_terminal_api_wrapper import GeckoTerminalAPIWrapper
+from gecko_api import GeckoTerminalAPIWrapper
 from network import Pools, Pool
 from users import User, Users, Property, TokenBalance
 from utils import format_number, round_to_significant_figures, clear_from_html
