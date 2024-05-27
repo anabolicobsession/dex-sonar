@@ -203,9 +203,9 @@ class TONSonar:
             user = update.message.from_user
             logger.warning(f'New user started the bot: {user.id}/{user.username}/{user.full_name}')
             self.users.add_user(id)
-            await update.message.reply_text('You\'ve already subscribed')
-        else:
             await update.message.reply_text('You\'ve subscribed to growing pool updates')
+        else:
+            await update.message.reply_text('You already subscribed')
 
     async def run_one_cycle(self):
         start_time = time.time()
@@ -288,7 +288,10 @@ class TONSonar:
                         balance=[balances[i]],
                         change=[changes[i]],
                     )
-                    await self.send_message(message, user, reply_markup=self.reply_markup_mute)
+                    _, status = await self.send_message(message, user, reply_markup=self.reply_markup_mute)
+
+                    if status is Status.BLOCK:
+                        break
 
     async def send_message(self, text, user: User, **kwargs) -> tuple[Message | None, Status]:
         def to_info(str, append=None):
