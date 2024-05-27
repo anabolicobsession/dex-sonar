@@ -139,25 +139,30 @@ class Pools:
     def update_pool(self, address: Address, **data):
         pool = Pool(address, **data)
 
-        if not self.pool_filter or self.pool_filter(pool):
-            if self.repeated_pool_filter_key:
-                pool_with_same_token = None
+        if pool.base_token.address in settings.TOKEN_BLACKLIST.values():
+            return
 
-                for p in self.pools:
-                    if p.base_token == pool.base_token:
-                        pool_with_same_token = p
-                        break
+        if self.pool_filter and not self.pool_filter(pool):
+            return
 
-                if pool_with_same_token:
-                    if self.repeated_pool_filter_key(pool) > self.repeated_pool_filter_key(pool_with_same_token):
-                        self.pools.remove(pool_with_same_token)
-                    else:
-                        return
+        if self.repeated_pool_filter_key:
+            pool_with_same_token = None
 
-            self.pools.append(pool)
-            self.tokens[pool.base_token.address] = pool.base_token
-            self.tokens[pool.quote_token.address] = pool.quote_token
-            self.dexes[pool.dex.id] = pool.dex
+            for p in self.pools:
+                if p.base_token == pool.base_token:
+                    pool_with_same_token = p
+                    break
+
+            if pool_with_same_token:
+                if self.repeated_pool_filter_key(pool) > self.repeated_pool_filter_key(pool_with_same_token):
+                    self.pools.remove(pool_with_same_token)
+                else:
+                    return
+
+        self.pools.append(pool)
+        self.tokens[pool.base_token.address] = pool.base_token
+        self.tokens[pool.quote_token.address] = pool.quote_token
+        self.dexes[pool.dex.id] = pool.dex
 
     def find_best_token_pool(self, token: Token, key: Callable) -> Pool | None:
         pools = [p for p in self.pools if p.base_token == token]

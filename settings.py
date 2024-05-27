@@ -29,10 +29,11 @@ NOTIFICATION_COOLDOWN_WALLET = _get_time(minutes=10)
 POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
-    p.liquidity > 3_000
+    p.liquidity > 3_000 and
+    p.makers > 15
 )
 
-PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 5 if PRODUCTION_MODE else 2
+PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 8 if PRODUCTION_MODE else 2
 PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 12 if PRODUCTION_MODE else 3
 LIQUIDITY_BOUND = 50_000
 
@@ -48,6 +49,11 @@ def is_pumped_pool(p):
 
 TELEGRAM_MESSAGE_MAX_LEN = 3700
 TELEGRAM_MESSAGE_MAX_WIDTH = 36
+
+TOKEN_BLACKLIST = {
+    'USD₮': 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+    'jUSDT': 'EQBynBO23ywHy_CgarY9NK9FTz0yDsG82PtcbSTQgGoXwiuA',
+}
 
 DATABASES_DIR_PATH = 'data'
 os.makedirs(DATABASES_DIR_PATH, exist_ok=True)
