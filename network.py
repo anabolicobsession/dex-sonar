@@ -1,3 +1,4 @@
+import csv
 from dataclasses import dataclass
 from typing import Callable
 
@@ -113,8 +114,12 @@ class Pools:
         self.pools: list[Pool] = []
         self.tokens: dict[Address, Token] = {}
         self.dexes: dict[DEXId, DEX] = {}
+        self.blacklist = dict[Address, str]
         self.pool_filter = pool_filter
         self.repeated_pool_filter_key = repeated_pool_filter_key
+
+        with open(settings.BLACKLIST_FILENAME, 'r') as file:
+            self.blacklist = dict(csv.reader(file))
 
     def __len__(self):
         return len(self.pools)
@@ -139,7 +144,7 @@ class Pools:
     def update_pool(self, address: Address, **data):
         pool = Pool(address, **data)
 
-        if pool.base_token.address in settings.TOKEN_BLACKLIST.values():
+        if pool.base_token.address in self.blacklist.keys():
             return
 
         if self.pool_filter and not self.pool_filter(pool):
