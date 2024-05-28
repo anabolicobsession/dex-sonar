@@ -3,9 +3,8 @@ import logging
 from statistics import mean
 from typing import Callable
 
-import geckoterminal_api
+from geckoterminal_api import AsyncGeckoTerminalAPI, limits, GeckoTerminalAPIError
 import requests.exceptions
-from geckoterminal_api import GeckoTerminalAPIError
 
 import settings
 from utils import Datetime
@@ -17,10 +16,10 @@ logger = logging.getLogger(__name__)
 class UnexpectedValueError(Exception): pass
 
 
-class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
+class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
     def __init__(self, max_requests=30, **params):
         super().__init__(**params)
-        self.MAX_PAGES = geckoterminal_api.limits.MAX_PAGE
+        self.MAX_PAGES = limits.MAX_PAGE
         self.MAX_REQUESTS = max_requests
         self.requests = None
         self.cooldown = None
@@ -46,7 +45,7 @@ class GeckoTerminalAPIWrapper(geckoterminal_api.GeckoTerminalAPI):
             response = None
             while not response:
                 try:
-                    response = request(network=settings.NETWORK, page=i)
+                    response = await request(network=settings.NETWORK, page=i)
 
                 except KeyError as e:
                     logger.info(f'Request limit exceeded')

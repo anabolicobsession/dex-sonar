@@ -192,6 +192,7 @@ class TONSonar:
                     await self.run_one_cycle()
             except CancelledError as e:
                 logger.info(f'Stopping the bot because of an exit signal{" - " + str(e) if str(e) else str(e)}')
+                await self.geckoterminal_api.close()
 
             await application.updater.stop()
             await application.stop()
