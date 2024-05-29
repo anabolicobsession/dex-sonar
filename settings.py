@@ -19,7 +19,7 @@ def _get_time(**kwargs):
 
 
 UPDATES_COOLDOWN = _get_time(minutes=2) if PRODUCTION_MODE else _get_time(seconds=10)
-GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE = 25 if PRODUCTION_MODE else 3
+GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE = 30 if PRODUCTION_MODE else 3
 
 NOTIFICATION_PUMP_COOLDOWN = _get_time(hours=2) if PRODUCTION_MODE else 0
 

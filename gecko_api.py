@@ -1,16 +1,18 @@
 import asyncio
 import logging
 from statistics import mean
-from typing import Callable
 
-from geckoterminal_api import AsyncGeckoTerminalAPI, limits, GeckoTerminalAPIError
-import requests.exceptions
+from aiohttp import ClientResponseError
+from geckoterminal_api import AsyncGeckoTerminalAPI, limits
 
 import settings
 from utils import Datetime
 from network import Pools, TimeData, Address, Token, DEXId, DEX
 
 logger = logging.getLogger(__name__)
+
+COOLDOWN_INITIAL_TIME = 10
+COOLDOWN_INCREASING_FACTOR = 1.2
 
 
 class UnexpectedValueError(Exception): pass
@@ -19,90 +21,45 @@ class UnexpectedValueError(Exception): pass
 class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
     def __init__(self, max_requests=30, **params):
         super().__init__(**params)
-        self.MAX_PAGES = limits.MAX_PAGE
-        self.MAX_REQUESTS = max_requests
+        self.max_requests = max_requests
         self.requests = None
-        self.cooldown = None
-
-    def _has_requests(self):
-        return self.requests < self.MAX_REQUESTS
-
-    def _increase_requests(self):
-        self.requests += 1
-
-    def _clear_requests(self):
-        self.requests = 0
-
-    async def _request_data(self, request: Callable) -> tuple[dict, dict]:
-        data = {}
-        included = {}
-        sleep = 10
-
-        for i in range(1, self.MAX_PAGES + 1):
-            if not self._has_requests():
-                break
-
-            response = None
-            while not response:
-                try:
-                    response = await request(network=settings.NETWORK, page=i)
-
-                except KeyError as e:
-                    logger.info(f'Request limit exceeded')
-
-                except requests.ReadTimeout as e:
-                    logger.warning(f'{e}')
-
-                except GeckoTerminalAPIError as e:
-                    logger.warning(e)
-
-                if not response:
-                    logger.info(f'Sleeping for {self.cooldown:.0f}s')
-                    await asyncio.sleep(self.cooldown)
-                    self.cooldown *= 1.3
-            self._increase_requests()
-
-            if response['data']:
-                data = data | {x['id']: x for x in response['data']}
-                included = included | {x['id']: x for x in response['included']}
-            else:
-                break
-
-        return data, included
 
     async def update_pools(self, pools: Pools):
         self._clear_requests()
-        self.cooldown = 10
 
-        data, included = await self._request_data(self.network_pools)
-        new_data, new_included = await self._request_data(self.network_new_pools)
+        top_pools_data, top_pools_meta = await self._request_pools_data(self.network_pools)
+        trending_pools_data, trending_pools_meta = await self._request_pools_data(self.network_trending_pools)
 
-        old_data_len = len(data)
-        data, included = {**data, **new_data}, {**included, **new_included}
-        logger.info(f'Total pools: {len(data)}, Top pools: {old_data_len}, New pools: {len(new_data)}')
+        data = {**top_pools_data, **trending_pools_data}
+        meta = {**top_pools_meta, **trending_pools_meta}
+
+        logger.info(f'Tokens: Total:{len(meta)} = Top:{len(top_pools_meta)} & Trending:{len(trending_pools_meta)}')
 
         tokens: dict[Address, Token] = {}
         dexes: dict[DEXId, DEX] = {}
 
-        for x in included.values():
+        # prepare information about every token or dex without taking into account pools themselves
+        for x in meta.values():
             x = x | x['attributes']
 
             match x['type']:
+
                 case 'token':
                     address = x['address']
+                    if address not in tokens: tokens[address] = Token(address, ticker=x['symbol'])
 
-                    if address not in tokens:
-                        tokens[address] = Token(address, ticker=x['symbol'])
                 case 'dex':
                     id = x['id']
+                    if id not in dexes: dexes[id] = DEX(id, name=x['name'])
 
-                    if id not in dexes:
-                        dexes[id] = DEX(id, name=x['name'])
                 case _:
                     raise UnexpectedValueError(x['type'])
 
         for x in data.values():
             x = x | x['attributes'] | x['relationships']
+
+            base_token = tokens[x['base_token']['data']['id'].split('_', 1)[1]]
+            quote_token = tokens[x['quote_token']['data']['id'].split('_', 1)[1]]
 
             transactions = x['transactions']
             price_change = x['price_change_percentage']
@@ -115,14 +72,15 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
             buyers_h1, sellers_h1 = int(transactions['h1']['buyers']), int(transactions['h1']['sellers'])
             buyers_h24, sellers_h24 = int(transactions['h24']['buyers']), int(transactions['h24']['sellers'])
 
+            # some values may be missing
             if not x['base_token_price_native_currency']:
-                logger.warning(f"Base token price native currency not set - {tokens[x['base_token']['data']['id'].split('_', 1)[1]]}/{float(x['volume_usd']['h24'])}")
+                logger.info(f'Base token price in native currency is not set - {base_token}')
                 continue
 
             pools.update_pool(
                 x['address'],
-                base_token=tokens[x['base_token']['data']['id'].split('_', 1)[1]],
-                quote_token=tokens[x['quote_token']['data']['id'].split('_', 1)[1]],
+                base_token=base_token,
+                quote_token=quote_token,
                 dex=dexes[x['dex']['data']['id']],
                 creation_date=Datetime.fromisoformat(x['pool_created_at']),
                 price=float(x['base_token_price_usd']),
@@ -145,3 +103,49 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
                     buyers_h24 / sellers_h24 if buyers_h24 and sellers_h24 else 1,
                 )
             )
+
+    def _clear_requests(self):
+        self.requests = 0
+
+    def _has_requests(self):
+        return self.requests < self.max_requests
+
+    def _increase_requests(self):
+        self.requests += 1
+
+    async def _request_pools_data(self, request_fun) -> tuple[dict, dict]:
+        data = {}
+        meta = {}
+        cooldown = COOLDOWN_INITIAL_TIME
+
+        for i in range(1, limits.MAX_PAGE + 1):
+            if not self._has_requests():
+                break
+
+            response = None
+            while not response:
+                try:
+                    response = await request_fun(network=settings.NETWORK, page=i)
+
+                #  API wrapper has a bug where it throws "KeyError" instead of the correct request limit exception
+                except (ClientResponseError, KeyError) as e:
+                    postfix = f'{e.status}: {e.message}' if isinstance(e, ClientResponseError) else str(e)
+                    logger.warning(f'Request limit exceeded: {postfix}')
+
+                except Exception as e:
+                    logger.warning(f'Unknown exception: {e}')
+
+                if not response:
+                    logger.warning(f'Waiting for {cooldown:.0f}s')
+                    await asyncio.sleep(cooldown)
+                    cooldown *= COOLDOWN_INCREASING_FACTOR
+            self._increase_requests()
+
+            if response['data']:
+                data = data | {x['id']: x for x in response['data']}
+                meta = meta | {x['id']: x for x in response['included']}
+            # there are no more data at page i
+            else:
+                break
+
+        return data, meta
