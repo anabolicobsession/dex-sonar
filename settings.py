@@ -30,21 +30,42 @@ POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
     p.liquidity > 3_000 and
-    p.makers > 15
+    p.makers > 30
 )
 
-PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 10 if PRODUCTION_MODE else 2
-PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 15 if PRODUCTION_MODE else 3
+if PRODUCTION_MODE:
+    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 15
+    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 10
+else:
+    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 3
+    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 2
 LIQUIDITY_BOUND = 50_000
 
+GROWTH_SCORE_COEFFICIENTS = {
+    'm5': 1/6,
+    'h1': 1,
+    'h6': 1/6,
+}
 
-def calculate_pool_growth_score(p):
-    return (p.price_change.m5 + p.price_change.h1) * 100
+# make up the coefficients to get a total of 1
+_GROWTH_SCORE_COEFFICIENTS_SUM = sum(GROWTH_SCORE_COEFFICIENTS.values())
+GROWTH_SCORE_COEFFICIENTS = {
+    'm5': GROWTH_SCORE_COEFFICIENTS['m5'] / _GROWTH_SCORE_COEFFICIENTS_SUM,
+    'h1': GROWTH_SCORE_COEFFICIENTS['h1'] / _GROWTH_SCORE_COEFFICIENTS_SUM,
+    'h6': GROWTH_SCORE_COEFFICIENTS['h6'] / _GROWTH_SCORE_COEFFICIENTS_SUM,
+}
 
 
-def is_pumped_pool(p):
-    score = calculate_pool_growth_score(p)
-    return score > PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY if p.liquidity > LIQUIDITY_BOUND else score > PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY
+def calculate_growth_score(p):
+    m5 = p.price_change.m5 * GROWTH_SCORE_COEFFICIENTS['m5']
+    h1 = p.price_change.h1 * GROWTH_SCORE_COEFFICIENTS['h1']
+    h6 = p.price_change.h6 * GROWTH_SCORE_COEFFICIENTS['h6']
+    return (m5 + h1 + max(h6, 0)) * 100
+
+
+def is_growing_pool(p):
+    score = calculate_growth_score(p)
+    return score > PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY if p.liquidity < LIQUIDITY_BOUND else score > PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY
 
 
 BLACKLIST_FILENAME = 'blacklist.csv'
