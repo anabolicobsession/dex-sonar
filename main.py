@@ -96,21 +96,24 @@ def pools_to_message(
         if balance and balance[i]: add_line('Balance:', f'{round_to_significant_figures(balance[i], 3)} {settings.NETWORK.upper()}')
         if change and change[i]: add_line('Change:', format_number(change[i], 4, sign=True, percent=True, significant_figures=2))
 
-        m5 = format_number(pool.price_change.m5, 3, sign=True, percent=True, significant_figures=2)
-        h1 = format_number(pool.price_change.h1, 4, sign=True, percent=True, significant_figures=2)
-        h24 = format_number(pool.price_change.h24, 4, sign=True, percent=True, significant_figures=2)
-        add_line('Price:', f'{m5} {h1} {h24}')
+        left = 3
 
-        m5 = format_number(round(pool.buyers_sellers_ratio.m5, 1), 4, 1)
-        h1 = format_number(round(pool.buyers_sellers_ratio.h1, 1), 4, 1)
-        h24 = format_number(round(pool.buyers_sellers_ratio.h24, 1), 4, 1)
-        add_line('Buyers/Sellers:', f'{m5} {h1} {h24}')
+        m5 = format_number(pool.price_change.m5, left, sign=True, percent=True, significant_figures=2)
+        h1 = format_number(pool.price_change.h1, left, sign=True, percent=True, significant_figures=2)
+        h6 = format_number(pool.price_change.h6, left, sign=True, percent=True, significant_figures=2)
+        add_line('Price:', f'{m5} {h1} {h6}')
+
+        for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio), ('Buys/Sells:', pool.buys_sells_ratio)]:
+            m5 =  format_number(round(timedata.m5, 1),  left, 1)
+            m15 = format_number(round(timedata.m15, 1), left, 1)
+            h1 =  format_number(round(timedata.h1, 1),  left, 1)
+            add_line(name, f'{m5} {m15} {h1}')
 
         add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
-        add_line('FDV/Liquidity:', format_number(round(pool.fdv / pool.liquidity, 1), 3, 1))
-        add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
         add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
+        add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
+        add_line('FDV/Liquidity:', format_number(round((pool.market_cap if pool.market_cap else pool.fdv) / pool.liquidity, 1), 3, 1))
         add_line('Age:', pool.creation_date.difference_to_pretty_str())
 
         link_dex = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK}/{pool.address}')
@@ -191,7 +194,7 @@ class TONSonar:
                 while True:
                     await self.run_one_cycle()
             except CancelledError as e:
-                logger.info(f'Stopping the bot because of an exit signal{" - " + str(e) if str(e) else str(e)}')
+                logger.info(f'Stopping the bot{" - " + str(e) if str(e) else str(e)}')
                 await self.geckoterminal_api.close()
 
             await application.updater.stop()
@@ -248,13 +251,14 @@ class TONSonar:
                         token_balance = user.get_token_balance(token)
 
                         if balance and token:
-                            if pool := self.pools.find_best_token_pool(token, key=lambda p: p.volume):
+                            pool: Pool = self.pools.find_best_token_pool(token, key=lambda p: p.volume)
 
+                            if pool:
                                 if not token_balance:
-                                    user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_currency))
+                                    user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_token))
                                     token.update(decimals=x.jetton.decimals)
                                 else:
-                                    change = pool.price_in_native_currency / token_balance.rate - 1
+                                    change = pool.price_in_native_token / token_balance.rate - 1
 
                                     if (
                                             abs(change) > settings.NOTIFICATION_USER_WALLET_CHANGE_BOUND and
@@ -262,9 +266,10 @@ class TONSonar:
                                     ):
                                         self.users.mute_for(user, token, settings.NOTIFICATION_COOLDOWN_WALLET)
                                         data.append((pool, change))
-                                        token_balance.set(amount=balance, rate=pool.price_in_native_currency)
+                                        token_balance.set(amount=balance, rate=pool.price_in_native_token)
                                     else:
                                         token_balance.set(amount=balance)
+
                         elif token_balance:
                             user.remove_token_balance(token_balance)
 

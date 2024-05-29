@@ -1,5 +1,4 @@
 import csv
-from dataclasses import dataclass
 from typing import Callable
 
 import settings
@@ -9,11 +8,20 @@ Address = str
 DEXId = str
 
 
-@dataclass
 class TimeData:
-    m5: float
-    h1: float
-    h24: float
+    def __init__(
+            self,
+            m5=None,
+            m15=None,
+            h1=None,
+            h6=None,
+            h24=None,
+    ):
+        self.m5 = m5
+        self.m15 = m15
+        self.h1 = h1
+        self.h6 = h6
+        self.h24 = h24
 
 
 class Token:
@@ -60,14 +68,13 @@ class Pool:
             creation_date,
 
             price,
-            price_in_native_currency,
-
+            price_in_native_token,
             fdv,
+            market_cap,
             volume,
             liquidity,
             transactions,
             makers,
-            transactions_per_wallet,
 
             price_change,
             buys_sells_ratio,
@@ -80,14 +87,13 @@ class Pool:
         self.creation_date: DateTime = creation_date
 
         self.price = price
-        self.price_in_native_currency = price_in_native_currency
-
+        self.price_in_native_token = price_in_native_token
         self.fdv = fdv
+        self.market_cap = market_cap
         self.volume = volume
         self.liquidity = liquidity
         self.transactions = transactions
         self.makers = makers
-        self.transactions_per_wallet = transactions_per_wallet
 
         self.price_change: TimeData = price_change
         self.buys_sells_ratio: TimeData = buys_sells_ratio

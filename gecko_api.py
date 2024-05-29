@@ -63,13 +63,15 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
             transactions = x['transactions']
             price_change = x['price_change_percentage']
 
-            buys_m5, sells_m5 = int(transactions['m5']['buys']), int(transactions['m5']['sells'])
-            buys_h1, sells_h1 = int(transactions['h1']['buys']), int(transactions['h1']['sells'])
-            buys_h24, sells_h24 = int(transactions['h24']['buys']), int(transactions['h24']['sells'])
+            buys_m5,  sells_m5 =  int(transactions['m5'] ['buys']),  int(transactions['m5'] ['sells'])
+            buys_m15, sells_m15 = int(transactions['m15']['buys']), int(transactions ['m15']['sells'])
+            buys_h1,  sells_h1 =  int(transactions['h1'] ['buys']),  int(transactions['h1'] ['sells'])
+            buys_h24, sells_h24 = int(transactions['h24']['buys']), int(transactions ['h24']['sells'])
 
-            buyers_m5, sellers_m5 = int(transactions['m5']['buyers']), int(transactions['m5']['sellers'])
-            buyers_h1, sellers_h1 = int(transactions['h1']['buyers']), int(transactions['h1']['sellers'])
-            buyers_h24, sellers_h24 = int(transactions['h24']['buyers']), int(transactions['h24']['sellers'])
+            buyers_m5,  sellers_m5 =  int(transactions['m5'] ['buyers']),  int(transactions['m5'] ['sellers'])
+            buyers_m15, sellers_m15 = int(transactions['m15']['buyers']), int(transactions ['m15']['sellers'])
+            buyers_h1,  sellers_h1 =  int(transactions['h1'] ['buyers']),  int(transactions['h1'] ['sellers'])
+            buyers_h24, sellers_h24 = int(transactions['h24']['buyers']), int(transactions ['h24']['sellers'])
 
             flippers = int(min(buyers_h24, sellers_h24) * settings.FLIPPER_PERCENT)
             makers = buyers_h24 + sellers_h24 - flippers
@@ -87,26 +89,32 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
                 creation_date=DateTime.fromisoformat(x['pool_created_at']),
 
                 price=float(x['base_token_price_usd']),
-                price_in_native_currency=float(x['base_token_price_native_currency']),
+                price_in_native_token=float(x['base_token_price_native_currency']),
                 fdv=float(x['fdv_usd']),
+                market_cap=float(x['market_cap_usd']) if x['market_cap_usd'] else None,
                 volume=float(x['volume_usd']['h24']),
                 liquidity=float(x['reserve_in_usd']),
                 transactions=buys_h24 + sells_h24,
                 makers=makers,
-                transactions_per_wallet=(buyers_h24 * (buys_h24 / buyers_h24 if buyers_h24 else 0) + sellers_h24 * (
-                    sells_h24 / sellers_h24 if sellers_h24 else 0)) / (buyers_h24 + sellers_h24 if buyers_h24 or sellers_h24 else 1),
 
-                price_change=TimeData(float(price_change['m5']) / 100, float(price_change['h1']) / 100, float(price_change['h24']) / 100),
+                price_change=TimeData(
+                    m5= float(price_change['m5']) / 100,
+                    h1= float(price_change['h1']) / 100,
+                    h6= float(price_change['h6']) / 100,
+                    h24=float(price_change['h24']) / 100,
+                ),
                 buys_sells_ratio=TimeData(
-                    buys_m5 / sells_m5 if buys_m5 and sells_m5 else 1,
-                    buys_h1 / sells_h1 if buys_h1 and sells_h1 else 1,
-                    buys_h24 / sells_h24 if buys_h24 and sells_h24 else 1,
+                    m5= max(buys_m5, 1)  / max(sells_m5, 1),
+                    m15=max(buys_m15, 1) / max(sells_m15, 1),
+                    h1= max(buys_h1, 1)  / max(sells_h1, 1),
+                    h24=max(buys_h24, 1) / max(sells_h24, 1),
                 ),
                 buyers_sellers_ratio=TimeData(
-                    buyers_m5 / sellers_m5 if buyers_m5 and sellers_m5 else 1,
-                    buyers_h1 / sellers_h1 if buyers_h1 and sellers_h1 else 1,
-                    buyers_h24 / sellers_h24 if buyers_h24 and sellers_h24 else 1,
-                )
+                    m5= max(buyers_m5, 1)  / max(sellers_m5, 1),
+                    m15=max(buyers_m15, 1) / max(sellers_m15, 1),
+                    h1= max(buyers_h1, 1)  / max(sellers_h1, 1),
+                    h24=max(buyers_h24, 1) / max(sellers_h24, 1),
+                ),
             ))
 
     def _clear_requests(self):
