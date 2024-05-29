@@ -126,7 +126,7 @@ def clear_from_html(str):
     return TAGS_REGEX.sub('', str)
 
 
-class Datetime(datetime):
+class DateTime(datetime):
     MINUTE = 60
     MINUTE_STR = 'min'
 

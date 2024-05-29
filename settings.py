@@ -69,3 +69,5 @@ TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG = 'Message is too long'
 TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED = 'Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message'
 TELEGRAM_MESSAGE_TO_EDIT_NOT_FOUND = 'Message to edit not found'
 TELEGRAM_CHAT_NOT_FOUND = 'Chat not found'
+
+FLIPPER_PERCENT = 0.1

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import settings
-from utils import Datetime
+from utils import DateTime
 
 Address = str
 DEXId = str
@@ -77,7 +77,7 @@ class Pool:
         self.base_token: Token = base_token
         self.quote_token: Token = quote_token
         self.dex: DEX = dex
-        self.creation_date: Datetime = creation_date
+        self.creation_date: DateTime = creation_date
 
         self.price = price
         self.price_in_native_currency = price_in_native_currency
@@ -141,9 +141,7 @@ class Pools:
     def get_tokens(self) -> list[Token]:
         return list(self.tokens.values())
 
-    def update_pool(self, address: Address, **data):
-        pool = Pool(address, **data)
-
+    def update(self, pool):
         if pool.base_token.address in self.blacklist.keys():
             return
 
