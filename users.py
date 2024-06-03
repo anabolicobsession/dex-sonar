@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+import network
 import settings
 from network import Token
 
@@ -31,6 +32,7 @@ class User:
     def __init__(self, id: Id):
         self.id: Id = id
         self.token_balances: dict[Token, TokenBalance] = {}
+        self.wallet_tokens: set[Token] = set()
 
     def add_token_balance(self, token_balance: TokenBalance):
         self.token_balances[token_balance.token] = token_balance

@@ -103,7 +103,7 @@ def pools_to_message(
         h6 = format_number(pool.price_change.h6, left, sign=True, percent=True, significant_figures=2)
         add_line('Price:', f'{m5} {h1} {h6}')
 
-        for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio), ('Buys/Sells:', pool.buys_sells_ratio)]:
+        for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio)]:
             m5 =  format_number(round(timedata.m5, 1),  left, 1)
             m15 = format_number(round(timedata.m15, 1), left, 1)
             h1 =  format_number(round(timedata.h1, 1),  left, 1)
@@ -113,14 +113,15 @@ def pools_to_message(
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
         add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
         add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
-        add_line('FDV/Liquidity:', format_number(round((pool.market_cap if pool.market_cap else pool.fdv) / pool.liquidity, 1), 3, 1))
+        add_line('Volume/Liquidity:', format_number(round(pool.volume / pool.liquidity, 1), 3, 1))
+        add_line('FDV/Liquidity:', format_number(round(pool.fdv / pool.liquidity, 1), 3, 1))
         add_line('Age:', pool.creation_date.difference_to_pretty_str())
 
-        link_dex = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK}/{pool.address}')
         link_gecko = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK}/pools/{pool.address}')
-        links = link_gecko + html.code(spaces(line_width - 22)) + link_dex
+        link_dex = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK}/{pool.address}')
+        links = link_dex + html.code(spaces(line_width - 22)) + link_gecko
 
-        new_pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links)
+        new_pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address))
 
         if len(clear_from_html(get_full_message(new_pool_message))) <= message_max_length:
             pool_message = new_pool_message
@@ -228,7 +229,7 @@ class TONSonar:
             await asyncio.sleep(cooldown)
 
     async def send_pump_notification(self):
-        pumped_pools_source = [p for p in self.pools if settings.is_growing_pool(p)]
+        pumped_pools_source = [p for p in self.pools if settings.should_be_notified(p)]
         pumped_pools_source.sort(key=settings.calculate_growth_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
@@ -254,6 +255,9 @@ class TONSonar:
                             pool: Pool = self.pools.find_best_token_pool(token, key=lambda p: p.volume)
 
                             if pool:
+                                user.wallet_tokens.add(token)
+
+
                                 if not token_balance:
                                     user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_token))
                                     token.update(decimals=x.jetton.decimals)
@@ -261,9 +265,14 @@ class TONSonar:
                                     change = pool.price_in_native_token / token_balance.rate - 1
 
                                     if (
-                                            abs(change) > settings.NOTIFICATION_USER_WALLET_CHANGE_BOUND and
+                                            balance * 10 ** -x.jetton.decimals * pool.price_in_native_token > settings.MIN_BALANCE and
+                                            (
+                                                    change < -settings.CHANGE_BOUND_LOW or
+                                                    change > settings.CHANGE_BOUND_HIGH
+                                            ) and
                                             not self.users.is_muted(user, token)
                                     ):
+                                        print(token, change, token_balance.rate, pool.price_in_native_token, pool.price_in_native_token)
                                         self.users.mute_for(user, token, settings.NOTIFICATION_COOLDOWN_WALLET)
                                         data.append((pool, change))
                                         token_balance.set(amount=balance, rate=pool.price_in_native_token)
@@ -279,7 +288,7 @@ class TONSonar:
             pumped_pools = []
 
             for pool in pumped_pools_source:
-                if pool not in wallet_pools:
+                if pool.base_token not in user.wallet_tokens:
                     if not self.users.is_muted(user, pool.base_token):
                         self.users.mute_for(user, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
                         pumped_pools.append(pool)
