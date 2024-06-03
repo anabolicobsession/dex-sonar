@@ -21,31 +21,37 @@ def _get_time(**kwargs):
 UPDATES_COOLDOWN = _get_time(minutes=2) if PRODUCTION_MODE else _get_time(seconds=10)
 GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE = 30 if PRODUCTION_MODE else 3
 
-NOTIFICATION_PUMP_COOLDOWN = _get_time(hours=2) if PRODUCTION_MODE else 0
+NOTIFICATION_PUMP_COOLDOWN = _get_time(hours=1) if PRODUCTION_MODE else 0
 
-NOTIFICATION_USER_WALLET_CHANGE_BOUND = 0.05
-NOTIFICATION_COOLDOWN_WALLET = _get_time(minutes=10)
+CHANGE_BOUND_HIGH = 0.03
+CHANGE_BOUND_LOW = 0.01
+MIN_BALANCE = 5
+NOTIFICATION_COOLDOWN_WALLET = _get_time(minutes=1)
 
 POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
-    p.liquidity > 3_000 and
+    p.liquidity > 5_000 and
+    p.volume > 15_000 and
     p.makers > 30
 )
 
-if PRODUCTION_MODE:
-    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 15
-    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 10
-else:
-    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 3
-    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 2
-LIQUIDITY_BOUND = 50_000
-
+GROWTH_MIN_SCORE = 5
+LIQUIDITY_BOUND = 100_000
 GROWTH_SCORE_COEFFICIENTS = {
     'm5': 1/6,
     'h1': 1,
     'h6': 1/6,
 }
+BUYS_SELLS_MIN_RATIO = 0.8
+
+
+if PRODUCTION_MODE:
+    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = GROWTH_MIN_SCORE + 5
+    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = GROWTH_MIN_SCORE
+else:
+    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 3
+    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 2
 
 # make up the coefficients to get a total of 1
 _GROWTH_SCORE_COEFFICIENTS_SUM = sum(GROWTH_SCORE_COEFFICIENTS.values())
@@ -63,9 +69,24 @@ def calculate_growth_score(p):
     return (m5 + h1 + max(h6, 0)) * 100
 
 
-def is_growing_pool(p):
+def is_dump(p):
+    return p.price_change.m5 < -0.1 or p.price_change.h1 < -0.2
+
+
+def is_growth(p):
+    if p.buys_sells_ratio.h1 < BUYS_SELLS_MIN_RATIO:
+        return False
+
     score = calculate_growth_score(p)
-    return score > PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY if p.liquidity < LIQUIDITY_BOUND else score > PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY
+
+    if p.liquidity < LIQUIDITY_BOUND:
+        return score > PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY
+    else:
+        return score > PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY
+
+
+def should_be_notified(p):
+    return is_growth(p) or is_dump(p)
 
 
 BLACKLIST_FILENAME = 'blacklist.csv'
