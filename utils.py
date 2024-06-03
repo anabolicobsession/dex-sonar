@@ -143,7 +143,7 @@ class DateTime(datetime):
     YEAR_STR = 'year'
 
     def difference_to_pretty_str(self):
-        seconds = (pytz.utc.localize(datetime.now()) - self).total_seconds()
+        seconds = (datetime.now(pytz.utc) - self).total_seconds()
 
         if seconds < self.MINUTE * 2:
             return str(int(seconds / self.MINUTE)) + ' ' + self.MINUTE_STR
