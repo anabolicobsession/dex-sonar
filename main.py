@@ -113,8 +113,6 @@ def pools_to_message(
         add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
         add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
         add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
-        add_line('Volume/Liquidity:', format_number(round(pool.volume / pool.liquidity, 1), 3, 1))
-        add_line('FDV/Liquidity:', format_number(round(pool.fdv / pool.liquidity, 1), 3, 1))
         add_line('Age:', pool.creation_date.difference_to_pretty_str())
 
         link_gecko = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK}/pools/{pool.address}')
