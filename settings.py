@@ -2,6 +2,7 @@ import os
 import logging
 from datetime import timedelta
 
+import numpy as np
 
 PRODUCTION_MODE = True
 
@@ -32,52 +33,48 @@ POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
     p.liquidity > 5_000 and
-    p.volume > 15_000 and
-    p.makers > 30
+    p.volume > 20_000 and
+    p.makers > 50
 )
 
-GROWTH_MIN_SCORE = 5
+PUMP_MIN_SCORE = 5
+DUMP_MIN_SCORE = 5
+
 LIQUIDITY_BOUND = 100_000
-GROWTH_SCORE_COEFFICIENTS = {
-    'm5': 1/6,
-    'h1': 1,
-    'h6': 1/6,
+CHANGE_SCORE_COEFFICIENTS = {
+    'm5': 3,
+    'h1': 6,
+    'h6': 1,
 }
-BUYS_SELLS_MIN_RATIO = 0.8
 
 
 if PRODUCTION_MODE:
-    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = GROWTH_MIN_SCORE + 5
-    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = GROWTH_MIN_SCORE
+    PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = PUMP_MIN_SCORE + 5
+    PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = PUMP_MIN_SCORE
 else:
     PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY = 3
     PUMPED_POOL_MIN_SCORE_HIGH_LIQUIDITY = 2
 
-# make up the coefficients to get a total of 1
-_GROWTH_SCORE_COEFFICIENTS_SUM = sum(GROWTH_SCORE_COEFFICIENTS.values())
-GROWTH_SCORE_COEFFICIENTS = {
-    'm5': GROWTH_SCORE_COEFFICIENTS['m5'] / _GROWTH_SCORE_COEFFICIENTS_SUM,
-    'h1': GROWTH_SCORE_COEFFICIENTS['h1'] / _GROWTH_SCORE_COEFFICIENTS_SUM,
-    'h6': GROWTH_SCORE_COEFFICIENTS['h6'] / _GROWTH_SCORE_COEFFICIENTS_SUM,
+CHANGE_SCORE_COEFFICIENTS = {
+    'm5': CHANGE_SCORE_COEFFICIENTS['m5'] / sum(CHANGE_SCORE_COEFFICIENTS.values()),
+    'h1': CHANGE_SCORE_COEFFICIENTS['h1'] / sum(CHANGE_SCORE_COEFFICIENTS.values()),
+    'h6': CHANGE_SCORE_COEFFICIENTS['h6'] / sum(CHANGE_SCORE_COEFFICIENTS.values()),
 }
 
 
-def calculate_growth_score(p):
-    m5 = p.price_change.m5 * GROWTH_SCORE_COEFFICIENTS['m5']
-    h1 = p.price_change.h1 * GROWTH_SCORE_COEFFICIENTS['h1']
-    h6 = p.price_change.h6 * GROWTH_SCORE_COEFFICIENTS['h6']
-    return (m5 + h1 + max(h6, 0)) * 100
+def calculate_change_score(p):
+    m5 = p.price_change.m5 * CHANGE_SCORE_COEFFICIENTS['m5']
+    h1 = p.price_change.h1 * CHANGE_SCORE_COEFFICIENTS['h1']
+    h6 = p.price_change.h6 * CHANGE_SCORE_COEFFICIENTS['h6']
+    return (m5 + h1 + np.clip(h6, -1, 1)) * 100
 
 
 def is_dump(p):
-    return p.price_change.m5 < -0.1 or p.price_change.h1 < -0.2
+    return calculate_change_score(p) < -DUMP_MIN_SCORE
 
 
-def is_growth(p):
-    if p.buys_sells_ratio.h1 < BUYS_SELLS_MIN_RATIO:
-        return False
-
-    score = calculate_growth_score(p)
+def is_pump(p):
+    score = calculate_change_score(p)
 
     if p.liquidity < LIQUIDITY_BOUND:
         return score > PUMPED_POOL_MIN_SCORE_LOW_LIQUIDITY
@@ -86,7 +83,7 @@ def is_growth(p):
 
 
 def should_be_notified(p):
-    return is_growth(p) or is_dump(p)
+    return is_pump(p) or is_dump(p)
 
 
 BLACKLIST_FILENAME = 'blacklist.csv'
