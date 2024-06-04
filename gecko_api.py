@@ -61,7 +61,7 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
             quote_token = tokens[x['quote_token']['data']['id'].split('_', 1)[1]]
 
             transactions = x['transactions']
-            price_change = x['price_change_percentage']
+            price_change = {k: float(v) / 100 for k, v in x['price_change_percentage'].items()}
 
             buys_m5,  sells_m5 =  int(transactions['m5'] ['buys']),  int(transactions['m5'] ['sells'])
             buys_m15, sells_m15 = int(transactions['m15']['buys']), int(transactions ['m15']['sells'])
@@ -72,6 +72,8 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
             buyers_m15, sellers_m15 = int(transactions['m15']['buyers']), int(transactions ['m15']['sellers'])
             buyers_h1,  sellers_h1 =  int(transactions['h1'] ['buyers']),  int(transactions['h1'] ['sellers'])
             buyers_h24, sellers_h24 = int(transactions['h24']['buyers']), int(transactions ['h24']['sellers'])
+
+            volume = {k: float(v) for k, v in x['volume_usd'].items()}
 
             flippers = int(min(buyers_h24, sellers_h24) * settings.FLIPPER_PERCENT)
             makers = buyers_h24 + sellers_h24 - flippers
@@ -92,16 +94,16 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
                 price_in_native_token=float(x['base_token_price_native_currency']),
                 fdv=float(x['fdv_usd']),
                 market_cap=float(x['market_cap_usd']) if x['market_cap_usd'] else None,
-                volume=float(x['volume_usd']['h24']),
+                volume=volume['h24'],
                 liquidity=float(x['reserve_in_usd']),
                 transactions=buys_h24 + sells_h24,
                 makers=makers,
 
                 price_change=TimeData(
-                    m5= float(price_change['m5']) / 100,
-                    h1= float(price_change['h1']) / 100,
-                    h6= float(price_change['h6']) / 100,
-                    h24=float(price_change['h24']) / 100,
+                    m5= price_change['m5'],
+                    h1= price_change['h1'],
+                    h6= price_change['h6'],
+                    h24=price_change['h24'],
                 ),
                 buys_sells_ratio=TimeData(
                     m5= max(buys_m5, 1)  / max(sells_m5, 1),
@@ -115,6 +117,12 @@ class GeckoTerminalAPIWrapper(AsyncGeckoTerminalAPI):
                     h1= max(buyers_h1, 1)  / max(sellers_h1, 1),
                     h24=max(buyers_h24, 1) / max(sellers_h24, 1),
                 ),
+                volume_ratio=TimeData(
+                    m5=volume['m5'] / (volume['h24'] / (24 * 12)) if volume['h24'] else 1,
+                    h1=volume['h1'] / (volume['h24'] / 24)        if volume['h24'] else 1,
+                    h6=volume['h6'] / (volume['h24'] / 4)         if volume['h24'] else 1,
+                    h24=1,
+                )
             ))
 
     def _clear_requests(self):

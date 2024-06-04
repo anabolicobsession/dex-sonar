@@ -103,14 +103,14 @@ def pools_to_message(
         h6 = format_number(pool.price_change.h6, left, sign=True, percent=True, significant_figures=2)
         add_line('Price:', f'{m5} {h1} {h6}')
 
-        for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio)]:
-            m5 =  format_number(round(timedata.m5, 1),  left, 1)
-            m15 = format_number(round(timedata.m15, 1), left, 1)
-            h1 =  format_number(round(timedata.h1, 1),  left, 1)
-            add_line(name, f'{m5} {m15} {h1}')
+        for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio), ('Volume ratio:', pool.volume_ratio)]:
+            n1 = format_number(round(timedata.m5, 1),  left, 1)
+            n2 = format_number(round(timedata.h1, 1), left, 1)
+            n3 = format_number(round(timedata.h6, 1),  left, 1) if name != 'Buyers/Sellers:' else spaces(len(n1))
+            add_line(name, f'{n1} {n2} {n3}')
 
-        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
+        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
         add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
         add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
         add_line('Volume/Liquidity:', format_number(round(pool.volume / pool.liquidity, 1), 3, 1))
@@ -230,7 +230,7 @@ class TONSonar:
 
     async def send_pump_notification(self):
         pumped_pools_source = [p for p in self.pools if settings.should_be_notified(p)]
-        pumped_pools_source.sort(key=settings.calculate_growth_score, reverse=True)
+        pumped_pools_source.sort(key=settings.calculate_change_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
 
         async def get_jetton_balances(user: User, wallet: network.Address) -> list[JettonBalance] | None:

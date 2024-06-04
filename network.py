@@ -65,7 +65,7 @@ class Pool:
             base_token,
             quote_token,
             dex,
-            creation_date,
+            creation_date: DateTime,
 
             price,
             price_in_native_token,
@@ -76,9 +76,10 @@ class Pool:
             transactions,
             makers,
 
-            price_change,
-            buys_sells_ratio,
-            buyers_sellers_ratio,
+            price_change: TimeData,
+            buys_sells_ratio: TimeData,
+            buyers_sellers_ratio: TimeData,
+            volume_ratio: TimeData
     ):
         self.address: Address = address
         self.base_token: Token = base_token
@@ -98,6 +99,7 @@ class Pool:
         self.price_change: TimeData = price_change
         self.buys_sells_ratio: TimeData = buys_sells_ratio
         self.buyers_sellers_ratio: TimeData = buyers_sellers_ratio
+        self.volume_ratio: TimeData = volume_ratio
 
     def __eq__(self, other):
         if isinstance(other, Pool):
