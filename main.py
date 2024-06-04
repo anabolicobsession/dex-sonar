@@ -104,10 +104,10 @@ def pools_to_message(
         add_line('Price:', f'{m5} {h1} {h6}')
 
         for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio), ('Volume ratio:', pool.volume_ratio)]:
-            n1 = format_number(round(timedata.m5, 1),  left, 1)
-            n2 = format_number(round(timedata.h1, 1), left, 1)
-            n3 = format_number(round(timedata.h6, 1),  left, 1) if name != 'Buyers/Sellers:' else spaces(len(n1))
-            add_line(name, f'{n1} {n2} {n3}')
+            m5 = format_number(round(timedata.m5, 1),  left, 1)
+            h1 = format_number(round(timedata.h1, 1), left, 1)
+            h6 = format_number(round(timedata.h6 if name != 'Buyers/Sellers:' else timedata.h24, 1),  left, 1)
+            add_line(name, f'{m5} {h1} {h6}')
 
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
         add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
