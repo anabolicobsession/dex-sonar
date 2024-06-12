@@ -3,11 +3,8 @@ import logging
 from datetime import timedelta
 
 import numpy as np
-from dotenv import load_dotenv
 
-load_dotenv('.env')
-
-PRODUCTION_MODE = False
+PRODUCTION_MODE = True
 CLOUD = False
 
 DEVELOPERS_CHAt_ID = {int(os.environ.get('DEVELOPER_TELEGRAM_ID'))}
