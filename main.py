@@ -33,20 +33,6 @@ handler.setLevel(logging.INFO)
 handler.setFormatter(logging_formatter)
 root_logger.addHandler(handler)
 
-# handler = logging.FileHandler(settings.LOGGING_PATH_WARNINGS, mode='w')
-# handler.setLevel(logging.WARNING)
-# handler.setFormatter(logging_formatter)
-# root_logger.addHandler(handler)
-#
-# handler = logging.FileHandler(settings.LOGGING_PATH_DEBUG, mode='w')
-# handler.setLevel(logging.DEBUG)
-# handler.setFormatter(logging_formatter)
-# root_logger.addHandler(handler)
-
-# logging.getLogger('httpx').setLevel(logging.WARNING)
-# logging.getLogger('httpcore.http11').setLevel(logging.INFO)
-# logging.getLogger('httpcore.connection').setLevel(logging.INFO)
-
 MessageID = int
 
 

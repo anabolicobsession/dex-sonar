@@ -100,10 +100,6 @@ DATABASES_PATH_MUTELISTS = os.path.join(DATABASES_DIR_PATH, 'mutelists.csv' if P
 
 LOGGING_LEVEL = logging.INFO
 LOGGING_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-LOGGING_DIR_PATH = 'logs'
-os.makedirs(LOGGING_DIR_PATH, exist_ok=True)
-LOGGING_PATH_WARNINGS = os.path.join(LOGGING_DIR_PATH, 'warnings.log')
-LOGGING_PATH_DEBUG = os.path.join(LOGGING_DIR_PATH, 'debug.log')
 
 TELEGRAM_FORBIDDEN_BLOCK = 'Forbidden: bot was blocked by the user'
 TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG = 'Message is too long'
