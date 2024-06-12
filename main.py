@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections.abc import Iterable
 import logging
 import time
@@ -22,9 +23,8 @@ from network import Pools, Pool
 from users import User, Users, Property, TokenBalance
 from utils import format_number, round_to_significant_figures, clear_from_html
 
-
 root_logger = logging.getLogger()
-root_logger.setLevel(level=logging.DEBUG)
+root_logger.setLevel(level=settings.LOGGING_LEVEL)
 logger = logging.getLogger(__name__)
 logging_formatter = logging.Formatter(settings.LOGGING_FORMAT)
 
@@ -33,20 +33,19 @@ handler.setLevel(logging.INFO)
 handler.setFormatter(logging_formatter)
 root_logger.addHandler(handler)
 
-handler = logging.FileHandler(settings.LOGGING_PATH_WARNINGS, mode='w')
-handler.setLevel(logging.WARNING)
-handler.setFormatter(logging_formatter)
-root_logger.addHandler(handler)
+# handler = logging.FileHandler(settings.LOGGING_PATH_WARNINGS, mode='w')
+# handler.setLevel(logging.WARNING)
+# handler.setFormatter(logging_formatter)
+# root_logger.addHandler(handler)
+#
+# handler = logging.FileHandler(settings.LOGGING_PATH_DEBUG, mode='w')
+# handler.setLevel(logging.DEBUG)
+# handler.setFormatter(logging_formatter)
+# root_logger.addHandler(handler)
 
-handler = logging.FileHandler(settings.LOGGING_PATH_DEBUG, mode='w')
-handler.setLevel(logging.DEBUG)
-handler.setFormatter(logging_formatter)
-root_logger.addHandler(handler)
-
-logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('httpcore.http11').setLevel(logging.INFO)
-logging.getLogger('httpcore.connection').setLevel(logging.INFO)
-
+# logging.getLogger('httpx').setLevel(logging.WARNING)
+# logging.getLogger('httpcore.http11').setLevel(logging.INFO)
+# logging.getLogger('httpcore.connection').setLevel(logging.INFO)
 
 MessageID = int
 
@@ -109,8 +108,8 @@ def pools_to_message(
             h6 = format_number(round(timedata.h6 if name != 'Buyers/Sellers:' else timedata.h24, 1),  left, 1)
             add_line(name, f'{m5} {h1} {h6}')
 
-        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
         add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
+        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
         add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
         add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
         add_line('Age:', pool.creation_date.difference_to_pretty_str())
@@ -161,7 +160,7 @@ class TONSonar:
         self.pools = Pools(pool_filter=settings.POOL_DEFAULT_FILTER, repeated_pool_filter_key=lambda p: p.volume)
         self.users: Users = Users()
         self.geckoterminal_api = GeckoTerminalAPIWrapper(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
-        self.ton_api = AsyncTonapi(api_key=settings.TON_API_KEY)
+        self.ton_api = AsyncTonapi(api_key=os.environ.get('TON_API_KEY'))
 
         self.reply_markup_mute = InlineKeyboardMarkup([[
             InlineKeyboardButton('1 day', callback_data='1'),
@@ -178,10 +177,10 @@ class TONSonar:
 
     async def run_event_loop(self):
         defaults = Defaults(parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
-        application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).defaults(defaults).build()
+        application = ApplicationBuilder().token(os.environ.get('TELEGRAM_BOT_TOKEN')).defaults(defaults).build()
         self.bot = application.bot
 
-        message_filter = FilterWhitelist(settings.WHITELIST_CHAT_ID if settings.PRODUCTION_MODE else [settings.DEVELOPER_CHAT_ID])
+        message_filter = FilterWhitelist(settings.WHITELIST_CHAT_ID if settings.PRODUCTION_MODE else settings.DEVELOPERS_CHAt_ID)
         application.add_handler(CommandHandler('start', self.start, message_filter))
         application.add_handler(CallbackQueryHandler(self.buttons_mute))
 
@@ -249,13 +248,14 @@ class TONSonar:
                         token = self.pools.get_token(x.jetton.address.to_userfriendly(is_bounceable=True))
                         token_balance = user.get_token_balance(token)
 
+                        if token and token not in user.wallet_tokens:
+                            user.wallet_tokens.add(token)
+                            self.users.unmute(user, token)
+
                         if balance and token:
                             pool: Pool = self.pools.find_best_token_pool(token, key=lambda p: p.volume)
 
                             if pool:
-                                user.wallet_tokens.add(token)
-
-
                                 if not token_balance:
                                     user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_token))
                                     token.update(decimals=x.jetton.decimals)
@@ -270,7 +270,6 @@ class TONSonar:
                                             ) and
                                             not self.users.is_muted(user, token)
                                     ):
-                                        print(token, change, token_balance.rate, pool.price_in_native_token, pool.price_in_native_token)
                                         self.users.mute_for(user, token, settings.NOTIFICATION_COOLDOWN_WALLET)
                                         data.append((pool, change))
                                         token_balance.set(amount=balance, rate=pool.price_in_native_token)
