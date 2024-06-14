@@ -102,16 +102,6 @@ class Users:
     def _save_user_database_to_disk(self):
         self.user_database.to_csv(settings.DATABASES_PATH_USERS)
 
-    def add_user(self, id: Id):
-        self.users[id] = User(id)
-        self.set_property(self.users[id], Property.WALLET, '')
-        self._save_user_database_to_disk()
-
-    def remove_user(self, id: Id):
-        self.users.pop(id)
-        self.user_database.drop(index=id, inplace=True)
-        self._save_user_database_to_disk()
-
     def set_property(self, user: User, property: Property, value):
         self.user_database.loc[user.id, property] = value
         self._save_user_database_to_disk()

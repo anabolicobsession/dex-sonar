@@ -13,7 +13,6 @@ from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQue
 from telegram.ext.filters import UpdateFilter
 from aiogram import html
 from pytonapi import AsyncTonapi
-from pytonapi.schema.jettons import JettonBalance
 
 import network
 import settings
@@ -32,6 +31,10 @@ handler = logging.StreamHandler()
 handler.setLevel(logging.INFO)
 handler.setFormatter(logging_formatter)
 root_logger.addHandler(handler)
+
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore.http11').setLevel(logging.INFO)
+logging.getLogger('httpcore.connection').setLevel(logging.INFO)
 
 MessageID = int
 
@@ -164,11 +167,8 @@ class TONSonar:
     async def run_event_loop(self):
         defaults = Defaults(parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
         application = ApplicationBuilder().token(os.environ.get('TELEGRAM_BOT_TOKEN')).defaults(defaults).build()
-        self.bot = application.bot
-
-        message_filter = FilterWhitelist(settings.WHITELIST_CHAT_ID if settings.PRODUCTION_MODE else settings.DEVELOPERS_CHAt_ID)
-        application.add_handler(CommandHandler('start', self.start, message_filter))
         application.add_handler(CallbackQueryHandler(self.buttons_mute))
+        self.bot = application.bot
 
         async with application:
             await application.start()
@@ -183,17 +183,6 @@ class TONSonar:
 
             await application.updater.stop()
             await application.stop()
-
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        id = update.message.chat_id
-
-        if not self.users.has_user(id):
-            user = update.message.from_user
-            logger.warning(f'New user started the bot: {user.id}/{user.username}/{user.full_name}')
-            self.users.add_user(id)
-            await update.message.reply_text('You\'ve subscribed to growing pool updates')
-        else:
-            await update.message.reply_text('You already subscribed')
 
     async def run_one_cycle(self):
         start_time = time.time()
@@ -212,83 +201,15 @@ class TONSonar:
             await asyncio.sleep(cooldown)
 
     async def send_pump_notification(self):
-        pumped_pools_source = [p for p in self.pools if settings.should_be_notified(p)]
-        pumped_pools_source.sort(key=settings.calculate_change_score, reverse=True)
-        logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools_source)}')
-
-        async def get_jetton_balances(user: User, wallet: network.Address) -> list[JettonBalance] | None:
-            try:
-                return (await self.ton_api.accounts.get_jettons_balances(wallet)).balances
-
-            except AttributeError as e:
-                logger.error(f'Exception occurred during using TON API - Chat ID: {user.id} - {e}')
-                return None
+        pumped_pools = [p for p in self.pools if settings.should_be_notified(p)]
+        pumped_pools.sort(key=settings.calculate_change_score, reverse=True)
+        logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools)}')
 
         for user in self.users.get_users():
-            data = []
-
-            if wallet := self.users.get_property(user, Property.WALLET):
-                if jetton_balances := await get_jetton_balances(user, wallet):
-                    for x in jetton_balances:
-                        balance = int(x.balance)
-                        token = self.pools.get_token(x.jetton.address.to_userfriendly(is_bounceable=True))
-                        token_balance = user.get_token_balance(token)
-
-                        if token and token not in user.wallet_tokens:
-                            user.wallet_tokens.add(token)
-                            self.users.unmute(user, token)
-
-                        if balance and token:
-                            pool: Pool = self.pools.find_best_token_pool(token, key=lambda p: p.volume)
-
-                            if pool:
-                                if not token_balance:
-                                    user.add_token_balance(TokenBalance(token, amount=balance, rate=pool.price_in_native_token))
-                                    token.update(decimals=x.jetton.decimals)
-                                else:
-                                    change = pool.price_in_native_token / token_balance.rate - 1
-
-                                    if (
-                                            balance * 10 ** -x.jetton.decimals * pool.price_in_native_token > settings.MIN_BALANCE and
-                                            (
-                                                    change < -settings.CHANGE_BOUND_LOW or
-                                                    change > settings.CHANGE_BOUND_HIGH
-                                            ) and
-                                            not self.users.is_muted(user, token)
-                                    ):
-                                        self.users.mute_for(user, token, settings.NOTIFICATION_COOLDOWN_WALLET)
-                                        data.append((pool, change))
-                                        token_balance.set(amount=balance, rate=pool.price_in_native_token)
-                                    else:
-                                        token_balance.set(amount=balance)
-
-                        elif token_balance:
-                            user.remove_token_balance(token_balance)
-
-            data.sort(key=lambda x: x[1], reverse=True)
-            data = list(zip(*data))
-            wallet_pools, change = (list(data[0]), list(data[1])) if data else ([], [])
-            pumped_pools = []
-
-            for pool in pumped_pools_source:
-                if pool.base_token not in user.wallet_tokens:
-                    if not self.users.is_muted(user, pool.base_token):
-                        self.users.mute_for(user, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
-                        pumped_pools.append(pool)
-
-            pools = [*wallet_pools, *pumped_pools]
-            balances = [user.get_token_balance(p.base_token).calculate_balance() for p in wallet_pools] + [None] * len(pumped_pools)
-            changes = change + [None] * len(pumped_pools)
-
-            if pools:
-                for i, pool in enumerate(pools):
-                    message = pools_to_message(
-                        [pool],
-                        balance=[balances[i]],
-                        change=[changes[i]],
-                    )
-                    _, status = await self.send_message(message, user, reply_markup=self.reply_markup_mute)
-
+            for i, pool in enumerate(pumped_pools):
+                if not self.users.is_muted(user, pool.base_token):
+                    self.users.mute_for(user, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
+                    _, status = await self.send_message(pools_to_message([pool]), user, reply_markup=self.reply_markup_mute)
                     if status is Status.BLOCK:
                         break
 
@@ -301,8 +222,7 @@ class TONSonar:
 
         except error.Forbidden as e:
             if str(e) == settings.TELEGRAM_FORBIDDEN_BLOCK:
-                logger.info(to_info(f'User blocked the bot, removing from the database'))
-                self.users.remove_user(user.id)
+                logger.info(to_info(f'User blocked the bot'))
                 return None, Status.BLOCK
             else:
                 raise UnknownException(e)
