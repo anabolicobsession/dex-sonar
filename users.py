@@ -1,153 +1,123 @@
 import os
-import time
-from enum import Enum
-from typing import Any
+from datetime import datetime, timedelta
 
-import pandas as pd
+import psycopg2
+import pytz
 
-import network
 import settings
 from network import Token
 
 
-Id = int
-Timestamp = float
-
-
-class TokenBalance:
-    def __init__(self, token, amount=None, rate=None):
-        self.token: Token = token
-        self.amount = amount
-        self.rate = rate
-
-    def set(self, amount=None, rate=None):
-        if amount: self.amount = amount
-        if rate: self.rate = rate
-
-    def calculate_balance(self):
-        return self.amount * 10 ** -self.token.decimals * self.rate
-
-
-class User:
-    def __init__(self, id: Id):
-        self.id: Id = id
-        self.token_balances: dict[Token, TokenBalance] = {}
-        self.wallet_tokens: set[Token] = set()
-
-    def add_token_balance(self, token_balance: TokenBalance):
-        self.token_balances[token_balance.token] = token_balance
-
-    def get_token_balance(self, token: Token) -> TokenBalance | None:
-        return self.token_balances.get(token, None)
-
-    def remove_token_balance(self, token_or_token_balance: Token | TokenBalance):
-        self.token_balances.pop(token_or_token_balance if isinstance(token_or_token_balance, Token) else token_or_token_balance.token)
-
-
-class Property(str, Enum):
-    ID = 'id'
-    WALLET = 'wallet'
-
-
-property_dtypes = {
-    Property.ID: 'int',
-    Property.WALLET: 'str',
-}
-
-
-properties_without_id = [Property.WALLET]
-
-class _MutelistProperty(str, Enum):
-    ID = Property.ID
-    TOKEN = 'token'
-    MUTE_UNTIL = 'mute_until'
-
-
-_mutelist_property_dtypes = {
-    _MutelistProperty.ID: property_dtypes[Property.ID],
-    _MutelistProperty.TOKEN: 'str',
-    _MutelistProperty.MUTE_UNTIL: 'float',
-}
+UserId = int
 
 
 class Users:
     def __init__(self):
-        self.users: dict[Id, User] = {}
-        self.user_database = pd.DataFrame(
-            index=pd.Series(name=Property.ID, dtype=property_dtypes[Property.ID]),
-            data={k: pd.Series(dtype=v) for k, v in property_dtypes.items() if k is not Property.ID}
-        )
-        self.mutelists = pd.DataFrame(
-            data={k: pd.Series(dtype=v) for k, v in _mutelist_property_dtypes.items()}
-        )
+        self.connection = psycopg2.connect(os.environ.get('DATABASE_URL'), sslmode='require')
+        self.connection.set_session(autocommit=True)
+        self._create_tables_if_dont_exist()
 
-        if os.path.isfile(settings.DATABASES_PATH_USERS):
-            self.user_database = pd.read_csv(settings.DATABASES_PATH_USERS, index_col=0, dtype=property_dtypes)
+    def close_connection(self):
+        self.connection.close()
 
-            for id in self.user_database.index:
-                self.users[id] = User(id)
+    def _create_tables_if_dont_exist(self):
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                CREATE TABLE IF NOT EXISTS {settings.DATABASE_NAME_USERS} (
+                    user_id BIGINT PRIMARY KEY,
+                    is_developer BOOLEAN NOT NULL DEFAULT FALSE
+                );
 
-        if os.path.isfile(settings.DATABASES_PATH_MUTELISTS):
-            self.mutelists = pd.read_csv(settings.DATABASES_PATH_MUTELISTS, dtype=_mutelist_property_dtypes)
+                CREATE TABLE IF NOT EXISTS {settings.DATABASE_NAME_MUTELISTS} (
+                    user_id BIGINT,
+                    token_address CHAR(48),
+                    mute_until TIMESTAMP,
 
-    def has_user(self, id: Id):
-        return id in self.users
+                    PRIMARY KEY (user_id, token_address)
+                );
+                '''
+            )
 
-    def get_user(self, id: Id) -> User:
-        return self.users[id]
+    def get_user_ids(self) -> list[int]:
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                    SELECT user_id FROM {settings.DATABASE_NAME_USERS};
+                '''
+                if settings.PRODUCTION_MODE else
+                f'''
+                    SELECT user_id FROM {settings.DATABASE_NAME_USERS} WHERE is_developer = TRUE;
+                '''
+            )
+            return [r[0] for r in c.fetchall()]
 
-    def get_users(self) -> list[User]:
-        return list(self.users.values())
+    def get_developer_ids(self) -> list[int]:
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                    SELECT user_id FROM {settings.DATABASE_NAME_USERS};
+                '''
+            )
+            return [r[0] for r in c.fetchall()]
 
-    def _save_user_database_to_disk(self):
-        self.user_database.to_csv(settings.DATABASES_PATH_USERS)
+    def _if_mute_record_exists(self, user_id: UserId, token: Token):
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM {settings.DATABASE_NAME_MUTELISTS}
+                        WHERE user_id = %s and token_address = %s
+                    )  
+                ''',
+                (user_id, token.address)
+            )
+            return c.fetchone()[0]
 
-    def set_property(self, user: User, property: Property, value):
-        self.user_database.loc[user.id, property] = value
-        self._save_user_database_to_disk()
+    def _get_mute_until(self, user_id: UserId, token: Token) -> datetime | None:
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                    SELECT mute_until
+                    FROM {settings.DATABASE_NAME_MUTELISTS}
+                    WHERE user_id = %s and token_address = %s;
+                ''',
+                (user_id, token.address)
+            )
+            return c.fetchone()[0]
 
-    def clear_property(self, user: User, property: Property):
-        match property:
-            case Property.WALLET:
-                self.user_database.loc[user.id, property] = ''
+    def is_muted(self, user_id: UserId, token: Token):
+        if self._if_mute_record_exists(user_id, token):
+            datetime_or_none = self._get_mute_until(user_id, token)
+            return not datetime_or_none or datetime.now(pytz.utc) < pytz.utc.localize(datetime_or_none)
+        return False
 
-        self._save_user_database_to_disk()
+    def _set_mute_until(self,  user_id: UserId, token: Token, mute_until: datetime | None):
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                    INSERT INTO {settings.DATABASE_NAME_MUTELISTS}
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, token_address)
+                    DO UPDATE SET mute_until = EXCLUDED.mute_until
+                    WHERE {settings.DATABASE_NAME_MUTELISTS}.user_id = %s and {settings.DATABASE_NAME_MUTELISTS}.token_address = %s;
+                ''',
+                (user_id, token.address, mute_until, user_id, token.address)
+            )
 
-    def get_property(self, user: User, property: Property) -> Any | None:
-        cell = self.user_database.loc[user.id, property]
+    def mute_for(self, user_id: UserId, token: Token, mute_for: timedelta):
+        self._set_mute_until(user_id, token, datetime.now(pytz.utc) + mute_for)
 
-        match property:
-            case Property.WALLET:
-                if pd.isna(cell):
-                    return None
+    def mute_forever(self, user_id: UserId, token: Token):
+        self._set_mute_until(user_id, token, None)
 
-        return cell
-
-    def _save_mutelists_to_disk(self):
-        self.mutelists.to_csv(settings.DATABASES_PATH_MUTELISTS, index=False)
-
-    def _find_mutelists_indices(self, user: User, token: Token):
-        return self.mutelists[(self.mutelists[_MutelistProperty.ID] == user.id) & (self.mutelists[_MutelistProperty.TOKEN] == token.address)].index
-
-    def is_muted(self, user: User, token: Token):
-        indices = self._find_mutelists_indices(user, token)
-
-        if len(indices) == 0:
-            return False
-        else:
-            mute_until = self.mutelists.loc[indices.item()][_MutelistProperty.MUTE_UNTIL]
-            return time.time() < mute_until if not pd.isna(mute_until) else True
-
-    def _set_mute_until(self, user: User, token: Token, mute_until: Timestamp | None):
-        indices = self._find_mutelists_indices(user, token)
-        self.mutelists.loc[len(self.mutelists.index) if len(indices) == 0 else indices.item()] = user.id, token.address, mute_until
-        self._save_mutelists_to_disk()
-
-    def mute_for(self, user: User, token: Token, mute_for: Timestamp):
-        self._set_mute_until(user, token, time.time() + mute_for)
-
-    def mute_forever(self, user: User, token: Token):
-        self._set_mute_until(user, token, None)
-
-    def unmute(self, user: User, token: Token):
-        self._set_mute_until(user, token, time.time())
+    def unmute(self, user_id: UserId, token: Token):
+        with self.connection.cursor() as c:
+            c.execute(
+                f'''
+                    DELETE FROM {settings.DATABASE_NAME_MUTELISTS}
+                    WHERE user_id = %s AND token_address = %s;
+                ''',
+                (user_id, token.address)
+            )

@@ -10,16 +10,14 @@ from enum import Enum, auto
 from telegram import error, Bot, Update, Message, LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQueryHandler, CommandHandler
-from telegram.ext.filters import UpdateFilter
 from aiogram import html
 from pytonapi import AsyncTonapi
 
 import network
 import settings
-import users
 from gecko_api import GeckoTerminalAPIWrapper
 from network import Pools, Pool
-from users import User, Users, Property, TokenBalance
+from users import UserId, Users
 from utils import format_number, round_to_significant_figures, clear_from_html
 
 root_logger = logging.getLogger()
@@ -130,19 +128,6 @@ class ImpossibleAction(Exception): pass
 class UnknownException(Exception): pass
 
 
-class FilterWhitelist(UpdateFilter):
-    def __init__(self, whitelist: set[users.Id]):
-        super().__init__()
-        self.whitelist = whitelist
-
-    def filter(self, update: Update):
-        if update.message.chat_id not in self.whitelist:
-            user = update.message.from_user
-            logger.warning(f'Someone else\'s is trying to use the bot: {user.id}/{user.username}/{user.full_name} - Message: {update.message.text}')
-            return False
-        return True
-
-
 class TONSonar:
     def __init__(self):
         self.bot: Bot | None = None
@@ -179,10 +164,17 @@ class TONSonar:
                     await self.run_one_cycle()
             except CancelledError as e:
                 logger.info(f'Stopping the bot{" - " + str(e) if str(e) else str(e)}')
-                await self.geckoterminal_api.close()
+                await self.safely_end_all_processes()
+            except Exception as e:
+                logging.warning(e)
+                await self.safely_end_all_processes()
 
             await application.updater.stop()
             await application.stop()
+
+    async def safely_end_all_processes(self):
+        self.users.close_connection()
+        await self.geckoterminal_api.close()
 
     async def run_one_cycle(self):
         start_time = time.time()
@@ -205,20 +197,20 @@ class TONSonar:
         pumped_pools.sort(key=settings.calculate_change_score, reverse=True)
         logger.info(f'Sending pump notification - Pumped pools: {len(pumped_pools)}')
 
-        for user in self.users.get_users():
+        for user_id in self.users.get_user_ids():
             for i, pool in enumerate(pumped_pools):
-                if not self.users.is_muted(user, pool.base_token):
-                    self.users.mute_for(user, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
-                    _, status = await self.send_message(pools_to_message([pool]), user, reply_markup=self.reply_markup_mute)
+                if not self.users.is_muted(user_id, pool.base_token):
+                    self.users.mute_for(user_id, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
+                    _, status = await self.send_message(pools_to_message([pool]), user_id, reply_markup=self.reply_markup_mute)
                     if status is Status.BLOCK:
                         break
 
-    async def send_message(self, text, user: User, **kwargs) -> tuple[Message | None, Status]:
+    async def send_message(self, text, users_id: UserId, **kwargs) -> tuple[Message | None, Status]:
         def to_info(str, append=None):
-            return f'{str} - Chat ID: {user.id}' + (f' - {append}' if append else '')
+            return f'{str} - Chat ID: {users_id}' + (f' - {append}' if append else '')
 
         try:
-            return await self.bot.send_message(user.id, text, **kwargs), Status.SUCCESS
+            return await self.bot.send_message(users_id, text, **kwargs), Status.SUCCESS
 
         except error.Forbidden as e:
             if str(e) == settings.TELEGRAM_FORBIDDEN_BLOCK:
@@ -265,24 +257,24 @@ class TONSonar:
     async def buttons_mute(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         option = int(query.data)
-        user = self.users.get_user(query.message.chat.id)
+        user_id = query.message.chat.id
         token = self._parse_token(query.message.text.split(' ', 3)[0 if option else 2])
         await query.answer()
 
         if not token:
-            await self.send_message('Sorry, unable to do this action in the current program version', user, disable_notification=True)
+            await self.send_message('Sorry, unable to do this action in the current program version', user_id, disable_notification=True)
             return
 
         if option:
             if option > 0:
-                self.users.mute_for(user, token, timedelta(days=option).total_seconds())
+                self.users.mute_for(user_id, token, timedelta(days=option))
             else:
-                self.users.mute_forever(user, token)
+                self.users.mute_forever(user_id, token)
 
             duration = f'for {option} day{"" if option == 1 else "s"}' if option > 0 else 'forever'
             await query.edit_message_text(text=f'Successfully muted {token.ticker} {duration}', reply_markup=self.reply_markup_unmute)
         else:
-            self.users.unmute(user, token)
+            self.users.unmute(user_id, token)
             await query.edit_message_text(text=f'{token.ticker} was unmuted')
 
 
