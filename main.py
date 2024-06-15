@@ -258,7 +258,19 @@ class TONSonar:
         query = update.callback_query
         option = int(query.data)
         user_id = query.message.chat.id
-        token = self._parse_token(query.message.text.split(' ', 3)[0 if option else 2])
+
+        if option:
+            token_address = query.message.text.rsplit('\n', 1)[-1]
+            matches = [t for t in self.pools.get_tokens() if t.address == token_address]
+
+            if matches:
+                token = matches[0]
+            else:
+                token = None
+                logger.warning(f'Can\'t find token by address: {token_address}')
+        else:
+            token = self._parse_token(query.message.text.split(' ', 3)[2])
+
         await query.answer()
 
         if not token:
