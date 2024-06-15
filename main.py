@@ -151,7 +151,7 @@ class TONSonar:
 
     async def run_event_loop(self):
         defaults = Defaults(parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
-        application = ApplicationBuilder().token(os.environ.get('TELEGRAM_BOT_TOKEN')).defaults(defaults).build()
+        application = ApplicationBuilder().token(os.environ.get('TELEGRAM_BOT_TOKEN' if settings.PRODUCTION_BOT else 'TELEGRAM_BOT_TOKEN_DEVELOPMENT')).defaults(defaults).build()
         application.add_handler(CallbackQueryHandler(self.buttons_mute))
         self.bot = application.bot
 

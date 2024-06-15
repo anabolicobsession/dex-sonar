@@ -3,9 +3,11 @@ from datetime import timedelta
 import numpy as np
 
 PRODUCTION_MODE = True
+PRODUCTION_BOT = False
+PRODUCTION_BOT = PRODUCTION_MODE & PRODUCTION_BOT
 
-DATABASE_NAME_MUTELISTS = 'mutelists' if PRODUCTION_MODE else '_mutelists'
-DATABASE_NAME_USERS = 'users' if PRODUCTION_MODE else '_users'
+DATABASE_NAME_MUTELISTS = 'mutelists' if PRODUCTION_BOT else '_mutelists'
+DATABASE_NAME_USERS = 'users' if PRODUCTION_BOT else '_users'
 
 UPDATES_COOLDOWN = timedelta(minutes=1).total_seconds() if PRODUCTION_MODE else timedelta(seconds=6).total_seconds()
 NOTIFICATION_PUMP_COOLDOWN = timedelta(minutes=30) if PRODUCTION_MODE else timedelta()
