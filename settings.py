@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 import numpy as np
 
-PRODUCTION_MODE = True
+PRODUCTION_MODE = False
 PRODUCTION_BOT = False
 PRODUCTION_BOT = PRODUCTION_MODE & PRODUCTION_BOT
 
@@ -16,8 +16,9 @@ GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE = 30 if PRODUCTION_MODE else 3
 POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
-    p.volume > 50_000 and
-    p.makers > 60
+    p.volume > 10_000 and
+    p.liquidity > 5_000 and
+    p.makers > 50
 )
 
 PUMP_MIN_SCORE = 8

@@ -9,13 +9,13 @@ from enum import Enum, auto
 
 from telegram import error, Bot, Update, Message, LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQueryHandler, CommandHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQueryHandler
 from aiogram import html
 from pytonapi import AsyncTonapi
 
 import network
 import settings
-from gecko_api import GeckoTerminalAPIWrapper
+from pools_with_api import PoolsWithAPI
 from network import Pools, Pool
 from users import UserId, Users
 from utils import format_number, round_to_significant_figures, clear_from_html
@@ -35,6 +35,21 @@ logging.getLogger('httpcore.http11').setLevel(logging.INFO)
 logging.getLogger('httpcore.connection').setLevel(logging.INFO)
 
 MessageID = int
+
+
+class ImpossibleAction(Exception):
+    ...
+
+
+class UnknownException(Exception):
+    ...
+
+
+class Status(Enum):
+    SUCCESS = auto()
+    REMOVED = auto()
+    BLOCK = auto()
+    EXCEPTION = auto()
 
 
 def pools_to_message(
@@ -115,25 +130,12 @@ def pools_to_message(
     return get_full_message(pool_message)
 
 
-class Status(Enum):
-    SUCCESS = auto()
-    REMOVED = auto()
-    BLOCK = auto()
-    EXCEPTION = auto()
-
-
-class ImpossibleAction(Exception): pass
-
-
-class UnknownException(Exception): pass
-
-
 class TONSonar:
     def __init__(self):
         self.bot: Bot | None = None
         self.pools = Pools(pool_filter=settings.POOL_DEFAULT_FILTER, repeated_pool_filter_key=lambda p: p.volume)
         self.users: Users = Users()
-        self.geckoterminal_api = GeckoTerminalAPIWrapper(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
+        self.geckoterminal_api = PoolsWithAPI(max_requests=settings.GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE)
         self.ton_api = AsyncTonapi(api_key=os.environ.get('TON_API_KEY'))
 
         self.reply_markup_mute = InlineKeyboardMarkup([[
@@ -174,7 +176,7 @@ class TONSonar:
 
     async def safely_end_all_processes(self):
         self.users.close_connection()
-        await self.geckoterminal_api.close()
+        await self.geckoterminal_api.close_api_sessions()
 
     async def run_one_cycle(self):
         start_time = time.time()

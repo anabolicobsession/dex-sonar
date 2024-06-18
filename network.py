@@ -149,7 +149,7 @@ class Pools:
     def get_tokens(self) -> list[Token]:
         return list(self.tokens.values())
 
-    def update(self, pool):
+    def add(self, pool):
         if pool.base_token.address in self.blacklist.keys():
             return
 
