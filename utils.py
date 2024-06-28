@@ -126,46 +126,45 @@ def clear_from_html(str):
     return TAGS_REGEX.sub('', str)
 
 
-class DateTime(datetime):
-    MINUTE = 60
-    MINUTE_STR = 'min'
+MINUTE = 60
+MINUTE_STR = 'min'
 
-    HOUR = MINUTE * 60
-    HOUR_STR = 'hour'
+HOUR = MINUTE * 60
+HOUR_STR = 'hour'
 
-    DAY = HOUR * 24
-    DAY_STR = 'day'
+DAY = HOUR * 24
+DAY_STR = 'day'
 
-    MONTH = DAY * 30
-    MONTH_STR = 'month'
+MONTH = DAY * 30
+MONTH_STR = 'month'
 
-    YEAR = DAY * 365
-    YEAR_STR = 'year'
+YEAR = DAY * 365
+YEAR_STR = 'year'
 
-    def difference_to_pretty_str(self):
-        seconds = (datetime.now(pytz.utc) - self).total_seconds()
+def difference_to_pretty_str(timestamp: datetime):
+    seconds = (datetime.now(pytz.utc) - timestamp).total_seconds()
 
-        if seconds < self.MINUTE * 2:
-            return str(int(seconds / self.MINUTE)) + ' ' + self.MINUTE_STR
-        elif seconds < self.MINUTE * 60:
-            return str(int(seconds / self.MINUTE)) + ' ' + self.MINUTE_STR + 's'
+    if seconds < MINUTE * 2:
+        return str(int(seconds / MINUTE)) + ' ' + MINUTE_STR
+    elif seconds < MINUTE * 60:
+        return str(int(seconds / MINUTE)) + ' ' + MINUTE_STR + 's'
 
-        elif seconds < self.HOUR * 2:
-            return str(int(seconds / self.HOUR)) + ' ' + self.HOUR_STR
-        elif seconds < self.HOUR * 24:
-            return str(int(seconds / self.HOUR)) + ' ' + self.HOUR_STR + 's'
+    elif seconds < HOUR * 2:
+        return str(int(seconds / HOUR)) + ' ' + HOUR_STR
+    elif seconds < HOUR * 24:
+        return str(int(seconds / HOUR)) + ' ' + HOUR_STR + 's'
 
-        elif seconds < self.DAY * 2:
-            return str(int(seconds / self.DAY)) + ' ' + self.DAY_STR
-        elif seconds < self.DAY * 30:
-            return str(int(seconds / self.DAY)) + ' ' + self.DAY_STR + 's'
+    elif seconds < DAY * 2:
+        return str(int(seconds / DAY)) + ' ' + DAY_STR
+    elif seconds < DAY * 30:
+        return str(int(seconds / DAY)) + ' ' + DAY_STR + 's'
 
-        elif seconds < self.MONTH * 2:
-            return str(int(seconds / self.MONTH)) + ' ' + self.MONTH_STR
-        elif seconds < self.MONTH * 12:
-            return str(int(seconds / self.MONTH)) + ' ' + self.MONTH_STR + 's'
+    elif seconds < MONTH * 2:
+        return str(int(seconds / MONTH)) + ' ' + MONTH_STR
+    elif seconds < MONTH * 12:
+        return str(int(seconds / MONTH)) + ' ' + MONTH_STR + 's'
 
-        elif seconds < self.YEAR * 2:
-            return str(int(seconds / self.YEAR)) + ' ' + self.YEAR_STR
-        else:
-            return str(int(seconds / self.YEAR)) + ' ' + self.YEAR_STR + 's'
+    elif seconds < YEAR * 2:
+        return str(int(seconds / YEAR)) + ' ' + YEAR_STR
+    else:
+        return str(int(seconds / YEAR)) + ' ' + YEAR_STR + 's'

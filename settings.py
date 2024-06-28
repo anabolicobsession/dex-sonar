@@ -2,22 +2,25 @@ import logging
 from datetime import timedelta
 import numpy as np
 
+from network import Network
+
+
 PRODUCTION_MODE = True
-PRODUCTION_BOT = False
+PRODUCTION_BOT = True
 PRODUCTION_BOT = PRODUCTION_MODE & PRODUCTION_BOT
 
-DATABASE_NAME_MUTELISTS = 'mutelists' if PRODUCTION_BOT else '_mutelists'
-DATABASE_NAME_USERS = 'users' if PRODUCTION_BOT else '_users'
+DATABASE_NAME_MUTELISTS = 'mutelists' if PRODUCTION_MODE else '_mutelists'
+DATABASE_NAME_USERS = 'users' if PRODUCTION_MODE else '_users'
 
-UPDATES_COOLDOWN = timedelta(minutes=1).total_seconds() if PRODUCTION_MODE else timedelta(seconds=6).total_seconds()
+UPDATES_COOLDOWN = timedelta(seconds=65).total_seconds()
 NOTIFICATION_PUMP_COOLDOWN = timedelta(minutes=30) if PRODUCTION_MODE else timedelta()
 GECKO_TERMINAL_MAX_REQUESTS_PER_CYCLE = 30 if PRODUCTION_MODE else 3
 
 POOL_DEFAULT_FILTER = (
     lambda p:
     p.quote_token.is_native_currency() and
-    p.volume > 50_000 and
-    p.makers > 60
+    p.liquidity > 10_000 and
+    p.volume > 20_000
 )
 
 PUMP_MIN_SCORE = 8
@@ -69,15 +72,14 @@ def should_be_notified(p):
     return is_pump(p) or is_dump(p)
 
 
-NETWORK = 'ton'
-NETWORK_NATIVE_CURRENCY_ADDRESS = 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c'
+NETWORK = Network.TON
 
 BLACKLIST_FILENAME = 'blacklist.csv'
 
 TELEGRAM_MESSAGE_MAX_LEN = 3700
-TELEGRAM_MESSAGE_MAX_WIDTH = 36
+TELEGRAM_MESSAGE_MAX_WIDTH = 35
 
-LOGGING_LEVEL = logging.INFO
+LOGGING_LEVEL = logging.DEBUG
 LOGGING_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
 TELEGRAM_FORBIDDEN_BLOCK = 'Forbidden: bot was blocked by the user'
