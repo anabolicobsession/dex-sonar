@@ -1,6 +1,6 @@
 from typing import Callable, TypeVar, Iterable, Any
 
-from network import Pool, Token, DEX
+from .network import Pool, Token, DEX
 
 
 T = TypeVar('T')
@@ -40,7 +40,7 @@ class Pools:
     def __iter__(self):
         return iter(self.pools)
 
-    def get_tokens(self) -> list[DEX]:
+    def get_tokens(self) -> list[Token]:
         return [x for x in self.tokens]
 
     def get_dexes(self) -> list[DEX]:
@@ -97,7 +97,7 @@ class Pools:
             self._update(pool)
 
     def apply_filter(self):
-        if self.pool_filter:
+        if self.pools and self.pool_filter:
             self.pools = SetWithGet(filter(self.pool_filter, self.pools))
             self.tokens = Tokens(Tokens(map(lambda p: p.base_token, self.pools)) | Tokens(map(lambda p: p.quote_token, self.pools)))
             self.dexes = SetWithGet(map(lambda p: p.dex, self.pools))

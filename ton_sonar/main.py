@@ -13,12 +13,18 @@ from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQueryHandler
 from aiogram import html
 
-import network
-import settings
-from pools_with_api import PoolsWithAPI
-from extended_pool import Pool
-from users import UserId, Users
-from utils import format_number, clear_from_html, difference_to_pretty_str
+from ton_sonar.config.config import config, NETWORK, pool_filter
+from ton_sonar.network.pools_with_api import PoolsWithAPI
+from ton_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, \
+    MaxBinsScheme, stats
+from ton_sonar.network.network import Token
+from ton_sonar.users import Users, UserId
+from ton_sonar.utils.utils import format_number, clear_from_html, difference_to_pretty_str
+from ton_sonar import settings
+
+
+MessageID = int
+
 
 root_logger = logging.getLogger()
 root_logger.setLevel(level=settings.LOGGING_LEVEL)
@@ -30,13 +36,11 @@ handler.setLevel(settings.LOGGING_LEVEL)
 handler.setFormatter(logging_formatter)
 root_logger.addHandler(handler)
 
+logging.getLogger('asyncio').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.INFO)
 logging.getLogger('matplotlib').setLevel(logging.INFO)
 logging.getLogger('telegram').setLevel(logging.INFO)
-
-
-MessageID = int
 
 
 class ImpossibleAction(Exception):
@@ -56,7 +60,7 @@ class Status(Enum):
 
 def pools_to_message(
         pools: Iterable[Pool],
-        signal: str,
+        pattern_message: str,
         prefix: str | tuple[str, str] | None = None,
         postfix: str | tuple[str, str] | None = None,
         line_width=settings.TELEGRAM_MESSAGE_MAX_WIDTH,
@@ -84,15 +88,18 @@ def pools_to_message(
     def get_full_message(pool_message):
         return '\n\n'.join(filter(bool, [prefix, pool_message, postfix]))
 
-    def add_line(str1, str2):
+    def add_line(str1, str2=None):
+        if str2 is None:
+            lines.append(str1)
+            return
         lines.append(f'{str1}{spaces(line_width - (len(str1) + len(str2)))}{str2}')
 
     for i, pool in enumerate(pools):
         lines = []
 
         add_line(
-            pool.base_token.ticker if pool.quote_token.is_native_currency() else pool.base_token.ticker + '/' + pool.quote_token.ticker,
-            signal,
+            pattern_message + ' '
+            + (pool.base_token.ticker if pool.quote_token.is_native_currency() else pool.base_token.ticker + '/' + pool.quote_token.ticker),
         )
 
         left = 3
@@ -114,20 +121,31 @@ def pools_to_message(
         # add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
         if pool.creation_date: add_line('Age:', difference_to_pretty_str(pool.creation_date))
 
-        add_line(
-            'Price:',
-            format_number(pool.price_usd, 4, 6, symbol='$', significant_figures=2),
-        )
+        # add_line(
+        #     'Price:',
+        #     format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2),
+        # )
+        #
+        # add_line(
+        #     'Price:',
+        #     format_number(pool.price_native, 4, 9, symbol=settings.NETWORK.name + ' ', significant_figures=2),
+        # )
 
+        # add_line(
+        #     'Price:',
+        # )
+
+        n = 3 + (11 + len(settings.NETWORK.name))
         add_line(
-            'Price:',
-            format_number(pool.price_native, 4, 6, symbol=settings.NETWORK.name + ' ', significant_figures=2),
+            f"{format_number(pool.price_native, 1, 9, symbol=settings.NETWORK.name + ' ', significant_figures=2):0{n}}",
+            format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2),
         )
 
         geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK.get_id()}/pools/{pool.address}')
-        swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft=TON&st={pool.base_token.ticker}')
+        # swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft=TON&st={pool.base_token.ticker}')
         dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK.get_id()}/{pool.address}')
-        links = geckoterminal + html.code(spaces(line_width - 33)) + swap_coffee + html.code(spaces(1)) + ' ' + dex_screener
+        # links = geckoterminal + html.code(spaces(line_width - 33)) + swap_coffee + html.code(spaces(1)) + ' ' + dex_screener
+        links = geckoterminal + html.code(spaces(line_width - 22)) + dex_screener
 
         new_pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address))
 
@@ -143,7 +161,7 @@ class TONSonar:
     def __init__(self):
         self.bot: Bot | None = None
         self.pools = PoolsWithAPI(
-            pool_filter=settings.POOL_DEFAULT_FILTER,
+            pool_filter=pool_filter,
             repeated_pool_filter_key=lambda x: x.volume,
         )
         self.users: Users = Users()
@@ -178,7 +196,7 @@ class TONSonar:
                 logger.info(f'Stopping the bot{" - " + str(e) if str(e) else str(e)}')
                 await self.safely_end_all_processes()
             except Exception as e:
-                await self.pools.close_api_sessions()
+                await self.safely_end_all_processes()
                 raise e
 
             await application.updater.stop()
@@ -191,69 +209,102 @@ class TONSonar:
     async def run_one_cycle(self):
         start_time = time.time()
 
-        logger.debug('Updating pools')
+        logger.info('Updating pools')
         await self.pools.update_using_api()
         logger.info(f'Pools: {len([x for x in self.pools])}')
 
-        await self.send_signal_messages()
+        await self.send_messages()
         await self.bot.set_my_short_description(f'Last update: {datetime.now().strftime("%I:%M %p")}')
 
-        logger.debug(f'Going to asynchronous sleep - {settings.UPDATES_COOLDOWN:.0f}s')
-        logger.debug('\n')
-        await asyncio.sleep(settings.UPDATES_COOLDOWN)
+        cooldown = config.getfloat('Pools', 'update_cooldown')
+        logger.info(f'Going to asynchronous sleep: {cooldown:.0f}s\n')
+        await asyncio.sleep(cooldown)
 
-    async def send_signal_messages(self):
-        logger.debug(f'Checking for signals')
+    async def send_messages(self):
+        logger.info(f'Checking for patterns')
         tuples = []
 
-        for p in self.pools:
-            if x := p.chart.get_signal(p, only_new=True):
-                figure = p.chart.create_plot(
-                    width=8,
-                    ratio=0.6,
+        for pool in self.pools:
+            if match := pool.chart.get_pattern(only_new=True):
+                with (
+                    pool.chart.create_plot(
+                        trends_view=TrendsView.GLOBAL,
+                        price_in_percents=True,
 
-                    percent=True,
-                    tick_limit=1500,
-                    datetime_format='%H:%M',
+                        plot_size_scheme=PlotSizeScheme(
+                            width=8,
+                            ratio=0.5,
+                        ),
+                        datetime_format='%H:%M',
 
-                    volume_opacity=0.4,
+                        size_scheme=SizeScheme(
+                            tick=15,
+                        ),
+                        opacity_scheme=OpacityScheme(
+                            # volume=0.4,
+                        ),
+                        max_bins_scheme=MaxBinsScheme(
+                            x=5,
+                            y=5,
+                        )
+                ) as (_, fig, _, _)):
 
-                    tick_size=15,
-                    xtick_bins=5,
-                    ytick_bins=5,
-                )
+                    plot_buffer = BytesIO()
+                    fig.savefig(
+                        plot_buffer,
+                        format='png',
+                        dpi=400,
+                        bbox_inches='tight',
+                        pad_inches=0.3,
+                    )
+                    tuples.append((pool, match, plot_buffer))
 
-                buffer = BytesIO()
-                figure.savefig(
-                    buffer,
-                    format='png',
-                    dpi=200,
-                    bbox_inches='tight',
-                    pad_inches=0.3,
-                )
-                buffer.seek(0)
 
-                tuples.append((p, *x, buffer))
-
-        if not tuples:
+        if tuples:
+            tuples.sort(key=lambda x: x[1].magnitude, reverse=True)
+            logger.info(f'Pools with patterns: {len(tuples)}')
+        else:
+            logger.info('No patterns found')
             return
-        tuples.sort(key=lambda x: x[2], reverse=True)
 
-        logger.info(f'Signals: {len(tuples)}')
+        print(
+            f'Stats: '
+            f'{stats.get(None, 0):3} | '
+            f'{stats.get(30,   0):3} | '
+            f'{stats.get(15,   0):3} | '
+            f'{stats.get(10,   0):3}'
+        )
 
         for user_id in self.users.get_user_ids():
-            for pool, signal, magnitude, buffer in tuples:
+
+            for pool, match, plot_buffer in tuples:
 
                 if not self.users.is_muted(user_id, pool.base_token):
                     # self.users.mute_for(user_id, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
                     # _, status = await self.send_message(message, user_id, reply_markup=self.reply_markup_mute)
 
-                    message = pools_to_message([pool], repr(signal) + f' {magnitude * 100:.0f}%')
-
-                    buffer.seek(0)
+                    quote = '\''
+                    pattern_message = (
+                        f'{"" if match.significant else quote}'
+                        f'{match.pattern.get_abbreviation()}'
+                        f'{match.magnitude * 100:.0f}'
+                    )
+                    pattern_message = (
+                            ('' if match.significant else quote)
+                            + match.pattern.get_abbreviation()
+                            + f' {match.magnitude * 100:.0f}'
+                    )
+                    message = pools_to_message([pool], pattern_message)
 
                     try:
-                        await self.bot.send_photo(user_id, buffer, message, reply_markup=self.reply_markup_mute)
+                        plot_buffer.seek(0)
+                        await self.bot.send_photo(
+                            user_id,
+                            plot_buffer,
+                            message,
+                            reply_markup=self.reply_markup_mute,
+                            disable_notification=not match.significant,
+                        )
                     except Exception as e:
                         logger.warning(f'During sending message: {e}')
 
@@ -299,7 +350,7 @@ class TONSonar:
             logging.warning(to_info(e))
             return None, Status.EXCEPTION
 
-    def _parse_token(self, token_ticker: str) -> network.Token | None:
+    def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]
 
         if len(matches) == 0:

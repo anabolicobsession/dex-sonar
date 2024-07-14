@@ -1,1 +1,1 @@
-worker: python main.py
+worker: python ton_sonar/main.py

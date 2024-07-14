@@ -4,7 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, AwareDatetime
 
-from api.base_api import BaseAPI, JSON, EmptyData
+from .base_api import BaseAPI, JSON, EmptyData
 
 
 NetworkId = str
@@ -45,7 +45,8 @@ class Currency(Enum):
 
 
 class Pool(BaseModel):
-    address: Address = Field(...)
+    network_id: NetworkId
+    address: Address
 
 
 class Candlestick(BaseModel):
@@ -58,7 +59,6 @@ class Candlestick(BaseModel):
 
 
 class GeckoTerminalAPI(BaseAPI):
-
     BASE_URL = 'https://api.geckoterminal.com/api/v2'
 
     MIN_PAGE = 1
@@ -73,7 +73,7 @@ class GeckoTerminalAPI(BaseAPI):
 
     async def get_pools(
             self,
-            network: NetworkId,
+            network_id: NetworkId,
             pool_source: PoolSource = PoolSource.TOP,
             pages: Page or PageInterval = MIN_PAGE,
             sort_by: SortBy = SortBy.TRANSACTIONS
@@ -84,19 +84,19 @@ class GeckoTerminalAPI(BaseAPI):
 
         for page in pages:
             response_json = await self._get_json(
-                'networks', network, pool_source.value + 'pools',
+                'networks', network_id, pool_source.value + 'pools',
                 params={
                     'page': page,
                     'sort': sort_by.value,
                 }
             )
-            pools.extend([Pool(**{**pool_json, **pool_json['attributes']}) for pool_json in response_json['data']])
+            pools.extend([Pool(**{'network_id': network_id, **pool_json['attributes']}) for pool_json in response_json['data']])
 
         return pools
 
     async def get_ohlcv(
             self,
-            network: NetworkId,
+            network_id: NetworkId,
             pool_address: Address,
             timeframe: Timeframe.Day | Timeframe.Hour | Timeframe.Minute = Timeframe.Day.ONE,
             currency: Currency = Currency.USD,
@@ -104,11 +104,16 @@ class GeckoTerminalAPI(BaseAPI):
     ) -> list[Candlestick]:
 
         json = await self._get_json(
-            'networks', network, 'pools', pool_address, 'ohlcv', timeframe.__class__.__name__.lower(),
+            'networks', network_id, 'pools', pool_address, 'ohlcv', timeframe.__class__.__name__.lower(),
             params={
                 'aggregate': timeframe.value,
                 'currency': currency.value,
-                'before_timestamp': int(before_timestamp.timestamp()) if before_timestamp else int(datetime.now(timezone.utc).timestamp()),
+                'before_timestamp':
+                    int(
+                        before_timestamp.astimezone(timezone.utc).timestamp()
+                        if before_timestamp
+                        else datetime.now(timezone.utc).timestamp()
+                    ),
                 'limit': 1000,
             }
         )

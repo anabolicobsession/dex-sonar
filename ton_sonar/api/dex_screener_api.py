@@ -1,6 +1,8 @@
+import logging
+
 from pydantic import BaseModel, Field, AwareDatetime
 
-from api.base_api import BaseAPI, JSON, UnsupportedSchema
+from .base_api import BaseAPI, JSON, UnsupportedSchema
 
 
 NetworkId = str
@@ -8,7 +10,7 @@ Address = str
 
 
 class Token(BaseModel):
-    address: str = Field(...)
+    address: Address = Field(...)
     ticker: str = Field(..., alias='symbol')
     name: str = Field(...)
 
@@ -39,27 +41,25 @@ class Liquidity(BaseModel):
 
 
 class Pool(BaseModel):
-    network_id: str = Field(..., alias='chainId')
-    address: str = Field(..., alias='pairAddress')
+    network_id: NetworkId = Field(..., alias='chainId')
+    address: Address = Field(..., alias='pairAddress')
     base_token: Token = Field(..., alias='baseToken')
     quote_token: Token = Field(..., alias='quoteToken')
+    dex_id: str = Field(..., alias='dexId')
 
-    price_usd: float = Field(..., alias='priceUsd')
     price_native: float = Field(..., alias='priceNative')
+    price_usd: float = Field(default=None, alias='priceUsd')
     liquidity: Liquidity = None
+    volume: TimePeriodsData = Field(..., alias='volume')
     fdv: float = None
 
-    price_change: TimePeriodsData = Field(..., alias="priceChange")
-    volume: TimePeriodsData = Field(..., alias="volume")
-    transactions: TimePeriodsTransactionCounts = Field(..., alias="txns")
-
-    dex_id: str = Field(..., alias='dexId')
-    creation_date: AwareDatetime = Field(alias='pairCreatedAt')
-    url: str = Field(...)
+    price_change: TimePeriodsData = Field(..., alias='priceChange')
+    transactions: TimePeriodsTransactionCounts = Field(..., alias='txns')
+    creation_date: AwareDatetime = Field(default=None, alias='pairCreatedAt')
+    url: str
 
 
 class DEXScreenerAPI(BaseAPI):
-
     BASE_URL = 'https://api.dexscreener.io/latest/dex'
     SCHEMA_VERSION = '1.0.0'
     MAX_ADDRESSES = 30
@@ -75,7 +75,17 @@ class DEXScreenerAPI(BaseAPI):
 
         return json
 
-    async def get_pools(self, network: NetworkId, pools: Address | list[Address]) -> list[Pool]:
-        pools_segment = pools if isinstance(pools, Address) else ','.join(pools)
+    async def get_pools(
+            self,
+            network: NetworkId,
+            address_or_addresses: Address | list[Address]
+    ) -> list[Pool]:
+
+        pools_segment = address_or_addresses if isinstance(address_or_addresses, Address) else ','.join(address_or_addresses)
         json = await self._get_json('pairs', network, pools_segment)
+
+        if not json['pairs']:
+            logging.warning(f"Empty 'pairs' attribute for pool addresses:\n{','.join(address_or_addresses)}")
+            raise Exception()
+
         return [Pool(**pool_json) for pool_json in json['pairs']]

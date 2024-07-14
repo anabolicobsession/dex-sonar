@@ -1,4 +1,4 @@
 #!/bin/bash
 
 heroku ps:scale worker=0
-heroku config:set PAUSE_SCHEDULER=false
+heroku config:set PAUSE_SCHEDULER=true
