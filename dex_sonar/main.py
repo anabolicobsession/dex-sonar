@@ -1,23 +1,23 @@
+import logging
 import asyncio
 from os import environ
+from io import BytesIO
 from collections.abc import Iterable
-import logging
 from asyncio import CancelledError
 from datetime import timedelta
-from io import BytesIO
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, CallbackQueryHandler
 from aiogram import html
 
-from ton_sonar.bot import Bot
-from ton_sonar.config.config import config, pool_filter, TESTING_MODE, NETWORK
-from ton_sonar.logs import setup_logging
-from ton_sonar.network.pools_with_api import PoolsWithAPI
-from ton_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, MaxBinsScheme
-from ton_sonar.network.network import Token
-from ton_sonar.users import Users
-from ton_sonar.utils.utils import format_number, difference_to_pretty_str
+from dex_sonar.config.config import config, pool_filter, TESTING_MODE, NETWORK
+from dex_sonar.logs import setup_logging
+from dex_sonar.bot import Bot
+from dex_sonar.network.pools_with_api import PoolsWithAPI
+from dex_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, MaxBinsScheme
+from dex_sonar.network.network import Token
+from dex_sonar.users import Users
+from dex_sonar.utils.utils import format_number, difference_to_pretty_str
 
 
 setup_logging()

@@ -13,8 +13,10 @@ class Bot:
             parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
+
         self.application = ApplicationBuilder().token(token).defaults(defaults).build()
         self.application_silent = ApplicationBuilder().token(token_silent).defaults(defaults).build()
+
         self.bot: TelegramBot = self.application.bot
         self.bot_silent: TelegramBot = self.application_silent.bot
 
