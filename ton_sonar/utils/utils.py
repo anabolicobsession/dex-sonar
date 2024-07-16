@@ -1,9 +1,5 @@
-import re
-from enum import Enum, auto
 from math import floor, log10
-from datetime import datetime
-
-import pytz
+from datetime import datetime, timezone
 
 
 def round_to_significant_figures(x, n=1):
@@ -67,65 +63,6 @@ def format_number(
     return ' ' * max(left, 0) + s + ' ' * max(right, 0)
 
 
-class FormattingType(Enum):
-    BOLD = auto()
-    ITALIC = auto()
-    UNDERLINE = auto()
-    STRIKETHROUGH = auto()
-    SPOILER = auto()
-    LINK = auto()
-    EMOJI = auto()
-    MONOSPACE = auto()
-    CODE = auto()
-
-
-SIMPLE_TAGS = {
-    FormattingType.BOLD: 'b',
-    FormattingType.ITALIC: 'i',
-    FormattingType.UNDERLINE: 'u',
-    FormattingType.STRIKETHROUGH: 's',
-    FormattingType.SPOILER: 'tg-spoiler',
-    FormattingType.MONOSPACE: 'code',
-    FormattingType.CODE: 'pre',
-}
-COMPLEX_TAGS = {
-    FormattingType.LINK: ('a', 'href'),
-    FormattingType.EMOJI: ('tg-emoji', 'emoji-id'),
-}
-
-
-def _add_brackets(str):
-    return '<' + str + '>'
-
-
-def _get_type_regex(type: FormattingType) -> str:
-    """
-    Get regular expression for HTML tags of formatting type.
-    Regular expression doesn't catch new line characters in HTML arguments.
-
-    :param type: Formatting type.
-    :type type: TelegramFormatter.Type
-    :return: Regular expression.
-    :rtype: str
-    """
-    if type in SIMPLE_TAGS.keys():
-        tag = SIMPLE_TAGS[type]
-        return _add_brackets('/?' + tag)
-    else:
-        tag = COMPLEX_TAGS[type][0]
-        opening_tag_without_brackets = tag + ' ' + COMPLEX_TAGS[type][1] + '="' + '.*' + '"'
-        closing_tag_without_brackets = '/' + tag
-        a = _add_brackets('(' + opening_tag_without_brackets + '|' + closing_tag_without_brackets + ')')
-        return a
-
-
-TAGS_REGEX = re.compile('|'.join({_get_type_regex(t) for t in [*SIMPLE_TAGS.keys(), *COMPLEX_TAGS.keys()]}))
-
-
-def clear_from_html(str):
-    return TAGS_REGEX.sub('', str)
-
-
 MINUTE = 60
 MINUTE_STR = 'min'
 
@@ -142,7 +79,7 @@ YEAR = DAY * 365
 YEAR_STR = 'year'
 
 def difference_to_pretty_str(timestamp: datetime):
-    seconds = (datetime.now(pytz.utc) - timestamp).total_seconds()
+    seconds = (datetime.now(timezone.utc) - timestamp).total_seconds()
 
     if seconds < MINUTE * 2:
         return str(int(seconds / MINUTE)) + ' ' + MINUTE_STR

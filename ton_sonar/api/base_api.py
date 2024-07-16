@@ -93,7 +93,7 @@ class BaseAPI(ABC):
         self.REQUEST_LIMIT = request_limit
 
     async def close(self):
-        await self.session.close()
+        if self.session: await self.session.close()
 
     def reset_request_counter(self):
         self.request_counter = 0

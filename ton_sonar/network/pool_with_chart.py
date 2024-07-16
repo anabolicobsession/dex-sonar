@@ -15,8 +15,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 import matplotlib.colors
 
-from ..config.config import config, TIMESTAMP_UNIT
-from ..settings import PRODUCTION_MODE
+from ..config.config import config, TIMESTAMP_UNIT, TESTING_MODE
 from ..utils.circular_list import CircularList
 from .network import Pool as NetworkPool
 
@@ -282,7 +281,7 @@ class PatternUnit:
 
     @staticmethod
     def _scale(x, pool: NetworkPool = None, base=100_000, slope=2.5):
-        if not PRODUCTION_MODE:
+        if TESTING_MODE:
             return x / 5
         if pool and pool.liquidity and pool.liquidity < base:
             deviation = (base - pool.liquidity) / base
@@ -367,9 +366,6 @@ class PatternMatch(_PatternMatchBody):
         super().__init__(body.start_timestamp, body.end_timestamp, body.significant, body.magnitude)
 
 
-stats: dict = {}
-
-
 class Pattern(Enum):
 
     DUMP = _PatternBody(
@@ -439,10 +435,6 @@ class Pattern(Enum):
 
         for trends in trends_views:
             if match_body := self.value.match(trends, pool, delay_tolerance=timedelta(minutes=config.getint('Patterns', 'delay_tolerance'))):
-
-                key = int(trends.max_timeframe.total_seconds() // 60) if trends.max_timeframe else None
-                stats[key] = stats.get(key, 0) + 1
-
                 yield PatternMatch(self, match_body)
 
     @staticmethod
@@ -456,13 +448,6 @@ class Pattern(Enum):
             for trends in trends_views:
 
                 if match_body := pattern.value.match(trends, pool, delay_tolerance=timedelta(minutes=config.getint('Patterns', 'delay_tolerance'))):
-
-                    key = int(trends.max_timeframe.total_seconds() // 60) if trends.max_timeframe else None
-                    stats[key] = stats.get(key, 0) + 1
-
-                    # print(f'Match: {pool.base_token.ticker} {pattern.get_name()}')
-                    # print(trends)
-
                     yield PatternMatch(pattern, match_body)
 
 
@@ -582,13 +567,6 @@ class Chart:
                     )
             ):
                 continue
-
-
-            print(
-                f'Match: {self.pool.base_token.ticker}, prev_end_timestamp = {self.previous_pattern_end_timestamp}'
-                f', difference = {datetime.now(timezone.utc) - self.previous_pattern_end_timestamp if self.previous_pattern_end_timestamp else "None"}'
-            )
-
 
             self.previous_pattern_end_timestamp = match.end_timestamp
             return match

@@ -1,61 +1,27 @@
 import asyncio
-import os
+from os import environ
 from collections.abc import Iterable
 import logging
-import time
 from asyncio import CancelledError
-from datetime import timedelta, datetime
-from enum import Enum, auto
+from datetime import timedelta
 from io import BytesIO
 
-from telegram import error, Bot, Update, Message, LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, ContextTypes, Defaults, CallbackQueryHandler
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ContextTypes, CallbackQueryHandler
 from aiogram import html
 
-from ton_sonar.config.config import config, NETWORK, pool_filter
+from ton_sonar.bot import Bot
+from ton_sonar.config.config import config, pool_filter, TESTING_MODE, NETWORK
+from ton_sonar.logs import setup_logging
 from ton_sonar.network.pools_with_api import PoolsWithAPI
-from ton_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, \
-    MaxBinsScheme, stats
+from ton_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, MaxBinsScheme
 from ton_sonar.network.network import Token
-from ton_sonar.users import Users, UserId
-from ton_sonar.utils.utils import format_number, clear_from_html, difference_to_pretty_str
-from ton_sonar import settings
+from ton_sonar.users import Users
+from ton_sonar.utils.utils import format_number, difference_to_pretty_str
 
 
-MessageID = int
-
-
-root_logger = logging.getLogger()
-root_logger.setLevel(level=settings.LOGGING_LEVEL)
+setup_logging()
 logger = logging.getLogger(__name__)
-logging_formatter = logging.Formatter(settings.LOGGING_FORMAT)
-
-handler = logging.StreamHandler()
-handler.setLevel(settings.LOGGING_LEVEL)
-handler.setFormatter(logging_formatter)
-root_logger.addHandler(handler)
-
-logging.getLogger('asyncio').setLevel(logging.WARNING)
-logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('httpcore').setLevel(logging.INFO)
-logging.getLogger('matplotlib').setLevel(logging.INFO)
-logging.getLogger('telegram').setLevel(logging.INFO)
-
-
-class ImpossibleAction(Exception):
-    ...
-
-
-class UnknownException(Exception):
-    ...
-
-
-class Status(Enum):
-    SUCCESS = auto()
-    REMOVED = auto()
-    BLOCK = auto()
-    EXCEPTION = auto()
 
 
 def pools_to_message(
@@ -63,8 +29,7 @@ def pools_to_message(
         pattern_message: str,
         prefix: str | tuple[str, str] | None = None,
         postfix: str | tuple[str, str] | None = None,
-        line_width=settings.TELEGRAM_MESSAGE_MAX_WIDTH,
-        message_max_length=settings.TELEGRAM_MESSAGE_MAX_LEN,
+        line_width=35,
 ):
     pool_message = ''
 
@@ -98,74 +63,46 @@ def pools_to_message(
         lines = []
 
         add_line(
-            pattern_message + ' '
-            + (pool.base_token.ticker if pool.quote_token.is_native_currency() else pool.base_token.ticker + '/' + pool.quote_token.ticker),
+            (pool.base_token.ticker if pool.quote_token.is_native_currency() else pool.base_token.ticker + '/' + pool.quote_token.ticker),
+            pattern_message,
         )
-
-        left = 3
-
-        # m5 = format_number(pool.price_change.m5, left, sign=True, percent=True, significant_figures=2)
-        # h1 = format_number(pool.price_change.h1, left, sign=True, percent=True, significant_figures=2)
-        # h6 = format_number(pool.price_change.h6, left, sign=True, percent=True, significant_figures=2)
-        # add_line('Price:', f'{m5} {h1} {h6}')
-
-        # for name, timedata in [('Buyers/Sellers:', pool.buyers_sellers_ratio), ('Volume ratio:', pool.volume_ratio)]:
-        #     m5 = format_number(round(timedata.m5, 1),  left, 1)
-        #     h1 = format_number(round(timedata.h1, 1), left, 1)
-        #     h6 = format_number(round(timedata.h6 if name != 'Buyers/Sellers:' else timedata.h24, 1),  left, 1)
-        #     add_line(name, f'{m5} {h1} {h6}')
 
         if pool.liquidity: add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
-        # add_line('Makers:', str(round_to_significant_figures(pool.makers, 2)))
-        # add_line('TXNs/Makers:', format_number(round(pool.transactions / pool.makers, 1), 3, 1))
         if pool.creation_date: add_line('Age:', difference_to_pretty_str(pool.creation_date))
 
-        # add_line(
-        #     'Price:',
-        #     format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2),
-        # )
-        #
-        # add_line(
-        #     'Price:',
-        #     format_number(pool.price_native, 4, 9, symbol=settings.NETWORK.name + ' ', significant_figures=2),
-        # )
-
-        # add_line(
-        #     'Price:',
-        # )
-
-        n = 3 + (11 + len(settings.NETWORK.name))
         add_line(
-            f"{format_number(pool.price_native, 1, 9, symbol=settings.NETWORK.name + ' ', significant_figures=2):0{n}}",
+            'Price:',
+            format_number(pool.price_native, 1, 9, significant_figures=2) + ' ' + NETWORK.name + ' ' +
             format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2),
         )
 
-        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{settings.NETWORK.get_id()}/pools/{pool.address}')
-        # swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft=TON&st={pool.base_token.ticker}')
-        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{settings.NETWORK.get_id()}/{pool.address}')
-        # links = geckoterminal + html.code(spaces(line_width - 33)) + swap_coffee + html.code(spaces(1)) + ' ' + dex_screener
+        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{NETWORK.get_id()}/pools/{pool.address}')
+        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{NETWORK.get_id()}/{pool.address}')
         links = geckoterminal + html.code(spaces(line_width - 22)) + dex_screener
 
-        new_pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address))
-
-        if len(clear_from_html(get_full_message(new_pool_message))) <= message_max_length:
-            pool_message = new_pool_message
-        else:
-            break
+        pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address))
 
     return get_full_message(pool_message)
 
 
-class TONSonar:
+class Application:
     def __init__(self):
-        self.bot: Bot | None = None
+        self.bot = Bot(
+            token=environ.get('BOT_TOKEN') if not TESTING_MODE else environ.get('TESTING_BOT_TOKEN'),
+            token_silent=environ.get('SILENT_BOT_TOKEN') if not TESTING_MODE else environ.get('TESTING_SILENT_BOT_TOKEN'),
+        )
+
         self.pools = PoolsWithAPI(
             pool_filter=pool_filter,
             repeated_pool_filter_key=lambda x: x.volume,
         )
         self.users: Users = Users()
+        self.cooldown = config.getfloat('Pools', 'update_cooldown')
 
+        self.bot.add_handlers([
+            CallbackQueryHandler(self.serve_mute_button),
+        ])
         self.reply_markup_mute = InlineKeyboardMarkup([[
             InlineKeyboardButton('1 day', callback_data='1'),
             InlineKeyboardButton('3 days', callback_data='3'),
@@ -177,50 +114,32 @@ class TONSonar:
         ]])
 
     def run(self):
-        asyncio.run(self.run_event_loop())
+        self.bot.run(self.run_main_loop())
 
-    async def run_event_loop(self):
-        defaults = Defaults(parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
-        application = ApplicationBuilder().token(os.environ.get('TELEGRAM_BOT_TOKEN' if settings.PRODUCTION_BOT else 'TELEGRAM_BOT_TOKEN_DEVELOPMENT')).defaults(defaults).build()
-        application.add_handler(CallbackQueryHandler(self.buttons_mute))
-        self.bot = application.bot
+    async def run_main_loop(self):
+        try:
+            await self.bot.set_description('Live')
+            while True: await self.run_cycle()
 
-        async with application:
-            await application.start()
-            await application.updater.start_polling()
+        except CancelledError:
+            logger.info(f'Stopping the bot')
 
-            try:
-                while True:
-                    await self.run_one_cycle()
-            except CancelledError as e:
-                logger.info(f'Stopping the bot{" - " + str(e) if str(e) else str(e)}')
-                await self.safely_end_all_processes()
-            except Exception as e:
-                await self.safely_end_all_processes()
-                raise e
+        finally:
+            await self.bot.set_description(None)
+            await self.pools.close_api_sessions()
+            self.users.close_connection()
 
-            await application.updater.stop()
-            await application.stop()
-
-    async def safely_end_all_processes(self):
-        self.users.close_connection()
-        await self.pools.close_api_sessions()
-
-    async def run_one_cycle(self):
-        start_time = time.time()
-
+    async def run_cycle(self):
         logger.info('Updating pools')
         await self.pools.update_using_api()
-        logger.info(f'Pools: {len([x for x in self.pools])}')
+        logger.info(f'Pools: {len(self.pools)}')
 
-        await self.send_messages()
-        await self.bot.set_my_short_description(f'Last update: {datetime.now().strftime("%I:%M %p")}')
+        await self.send_messages_if_patterns_detected()
 
-        cooldown = config.getfloat('Pools', 'update_cooldown')
-        logger.info(f'Going to asynchronous sleep: {cooldown:.0f}s\n')
-        await asyncio.sleep(cooldown)
+        logger.info(f'Sleep for {self.cooldown:.0f}s\n')
+        await asyncio.sleep(self.cooldown)
 
-    async def send_messages(self):
+    async def send_messages_if_patterns_detected(self):
         logger.info(f'Checking for patterns')
         tuples = []
 
@@ -267,88 +186,20 @@ class TONSonar:
             logger.info('No patterns found')
             return
 
-        print(
-            f'Stats: '
-            f'{stats.get(None, 0):3} | '
-            f'{stats.get(30,   0):3} | '
-            f'{stats.get(15,   0):3} | '
-            f'{stats.get(10,   0):3}'
-        )
-
         for user_id in self.users.get_user_ids():
 
             for pool, match, plot_buffer in tuples:
 
                 if not self.users.is_muted(user_id, pool.base_token):
-                    # self.users.mute_for(user_id, pool.base_token, settings.NOTIFICATION_PUMP_COOLDOWN)
-                    # _, status = await self.send_message(message, user_id, reply_markup=self.reply_markup_mute)
 
-                    quote = '\''
-                    pattern_message = (
-                        f'{"" if match.significant else quote}'
-                        f'{match.pattern.get_abbreviation()}'
-                        f'{match.magnitude * 100:.0f}'
+                    pattern_message = match.pattern.get_name() + f' {match.magnitude:.0%}'
+                    await self.bot.send_message(
+                        user_id,
+                        pools_to_message([pool], pattern_message),
+                        plot_buffer,
+                        reply_markup=self.reply_markup_mute,
+                        silent=not match.significant
                     )
-                    pattern_message = (
-                            ('' if match.significant else quote)
-                            + match.pattern.get_abbreviation()
-                            + f' {match.magnitude * 100:.0f}'
-                    )
-                    message = pools_to_message([pool], pattern_message)
-
-                    try:
-                        plot_buffer.seek(0)
-                        await self.bot.send_photo(
-                            user_id,
-                            plot_buffer,
-                            message,
-                            reply_markup=self.reply_markup_mute,
-                            disable_notification=not match.significant,
-                        )
-                    except Exception as e:
-                        logger.warning(f'During sending message: {e}')
-
-                    # if status is Status.BLOCK:
-                    #     break
-
-    async def send_message(self, text, users_id: UserId, **kwargs) -> tuple[Message | None, Status]:
-        def to_info(str, append=None):
-            return f'{str} - Chat ID: {users_id}' + (f' - {append}' if append else '')
-
-        try:
-            return await self.bot.send_message(users_id, text, **kwargs), Status.SUCCESS
-
-        except error.Forbidden as e:
-            if str(e) == settings.TELEGRAM_FORBIDDEN_BLOCK:
-                logger.info(to_info(f'User blocked the bot'))
-                return None, Status.BLOCK
-            else:
-                raise UnknownException(e)
-
-        except error.BadRequest as e:
-            match str(e):
-                case settings.TELEGRAM_MESSAGE_TO_EDIT_NOT_FOUND:
-                    logger.warning(to_info(e))
-                    return None, Status.REMOVED
-
-                case settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_NOT_MODIFIED:
-                    logger.error(to_info(e))
-                    return None, Status.EXCEPTION
-
-                case settings.TELEGRAM_BAD_REQUEST_MESSAGE_IS_TOO_LONG:
-                    logger.error(to_info(e, f'{len(clear_from_html(text))} chars'))
-                    return None, Status.EXCEPTION
-
-                case settings.TELEGRAM_CHAT_NOT_FOUND:
-                    logger.warning(to_info(e))
-                    return None, Status.EXCEPTION
-
-                case _:
-                    raise UnknownException(e)
-
-        except error.TimedOut as e:
-            logging.warning(to_info(e))
-            return None, Status.EXCEPTION
 
     def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]
@@ -360,7 +211,7 @@ class TONSonar:
 
         return matches[0] if len(matches) >= 1 else None
 
-    async def buttons_mute(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def serve_mute_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         option = int(query.data)
         user_id = query.message.chat.id
@@ -380,7 +231,11 @@ class TONSonar:
         await query.answer()
 
         if not token:
-            await self.send_message('Sorry, unable to do this action in the current program version', user_id, disable_notification=True)
+            await self.bot.send_message(
+                user_id,
+                'Sorry, unable to do this action in the current program version',
+                silent=context.bot,
+            )
             return
 
         if option:
@@ -390,11 +245,16 @@ class TONSonar:
                 self.users.mute_forever(user_id, token)
 
             duration = f'for {option} day{"" if option == 1 else "s"}' if option > 0 else 'forever'
-            await query.edit_message_caption(caption=f'Successfully muted {token.ticker} {duration}', reply_markup=self.reply_markup_unmute)
+            await query.edit_message_caption(
+                caption=f'Successfully muted {token.ticker} {duration}',
+                reply_markup=self.reply_markup_unmute
+            )
         else:
             self.users.unmute(user_id, token)
-            await query.edit_message_caption(caption=   f'{token.ticker} was unmuted')
+            await query.edit_message_caption(
+                caption=f'{token.ticker} was unmuted',
+            )
 
 
 if __name__ == '__main__':
-    TONSonar().run()
+    Application().run()
