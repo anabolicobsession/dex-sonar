@@ -1,23 +1,25 @@
-import logging
 import asyncio
-from os import environ
-from io import BytesIO
-from collections.abc import Iterable
+import gc
+import logging
 from asyncio import CancelledError
+from collections.abc import Iterable
 from datetime import timedelta
+from io import BytesIO
+from os import environ
 
+import psutil
+from aiogram import html
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, CallbackQueryHandler
-from aiogram import html
 
-from dex_sonar.config.config import config, pool_filter, TESTING_MODE, NETWORK
-from dex_sonar.logs import setup_logging
 from dex_sonar.bot import Bot
-from dex_sonar.network.pools_with_api import PoolsWithAPI
-from dex_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, MaxBinsScheme
+from dex_sonar.config.config import config, TESTING_MODE, NETWORK
+from dex_sonar.logs import setup_logging
 from dex_sonar.network.network import Token
+from dex_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, MaxBinsScheme, Backend
+from dex_sonar.network.pools_with_api import PoolsWithAPI
 from dex_sonar.users import Users
-from dex_sonar.utils.utils import format_number, difference_to_pretty_str
+from dex_sonar.utils.utils import format_number, difference_to_pretty_str, get_current_timestamp
 
 
 setup_logging()
@@ -94,8 +96,15 @@ class Application:
         )
 
         self.pools = PoolsWithAPI(
-            pool_filter=pool_filter,
-            repeated_pool_filter_key=lambda x: x.volume,
+            pool_filter=(
+                lambda x:
+                x.liquidity > config.getint('Pools', 'min_liquidity') and
+                x.volume > config.getint('Pools', 'min_volume')
+            ),
+            repeated_pool_filter_key=(
+                lambda x:
+                x.volume
+            ),
         )
         self.users: Users = Users()
         self.cooldown = config.getfloat('Pools', 'update_cooldown')
@@ -112,6 +121,10 @@ class Application:
         self.reply_markup_unmute = InlineKeyboardMarkup([[
             InlineKeyboardButton('Unmute', callback_data='0'),
         ]])
+
+        self.start_timestamp = None
+        self.cycles = 0
+        self.last_memory_usage = None
 
     def run(self):
         self.bot.run(self.run_main_loop())
@@ -130,6 +143,8 @@ class Application:
             self.users.close_connection()
 
     async def run_cycle(self):
+        self.log_debug_info()
+
         logger.info('Updating pools')
         await self.pools.update_using_api()
         logger.info(f'Pools: {len(self.pools)}')
@@ -138,6 +153,27 @@ class Application:
 
         logger.info(f'Sleep for {self.cooldown:.0f}s\n')
         await asyncio.sleep(self.cooldown)
+
+    def log_debug_info(self):
+        if logger.isEnabledFor(logging.DEBUG):
+
+            if not self.start_timestamp: self.start_timestamp = get_current_timestamp()
+            minutes = (get_current_timestamp() - self.start_timestamp).total_seconds() / 60
+            ram = psutil.virtual_memory()
+
+            logger.debug(
+                ' - '.join([
+                    f'General info',
+                    f'Cycles: {self.cycles:3}',
+                    f'Time: {minutes:4.0f}m',
+                    f'Speed: {self.cycles / minutes:3.1f} cycles/s',
+                    f'Memory change: {(ram.used - (self.last_memory_usage if self.last_memory_usage else ram.used)) / 1024 ** 2:+4.0f} MiB',
+                    f'Memory usage: {ram.used / 1024 ** 2:5.0f} MiB / {ram.total / 1024 ** 2 :5.0f} MiB',
+                ])
+            )
+
+            self.last_memory_usage = ram.used
+            self.cycles += 1
 
     async def send_messages_if_patterns_detected(self):
         logger.info(f'Checking for patterns')
@@ -149,6 +185,7 @@ class Application:
                     pool.chart.create_plot(
                         trends_view=TrendsView.GLOBAL,
                         price_in_percents=True,
+                        backend=Backend.AGG,
 
                         plot_size_scheme=PlotSizeScheme(
                             width=8,
@@ -166,18 +203,23 @@ class Application:
                             x=5,
                             y=5,
                         )
-                ) as (_, fig, _, _)):
+                ) as (plt, fig, _, _)):
 
                     plot_buffer = BytesIO()
                     fig.savefig(
                         plot_buffer,
                         format='png',
-                        dpi=400,
+                        dpi=150,
                         bbox_inches='tight',
                         pad_inches=0.3,
                     )
                     tuples.append((pool, match, plot_buffer))
 
+                    plt.close(fig)
+                    plt.cla()
+                    plt.clf()
+                    plt.close('all')
+                    gc.collect()
 
         if tuples:
             tuples.sort(key=lambda x: x[1].magnitude, reverse=True)
@@ -185,6 +227,7 @@ class Application:
         else:
             logger.info('No patterns found')
             return
+
 
         for user_id in self.users.get_user_ids():
 
@@ -200,6 +243,9 @@ class Application:
                         reply_markup=self.reply_markup_mute,
                         silent=not match.significant
                     )
+
+                    plot_buffer.close()
+                    gc.collect()
 
     def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]

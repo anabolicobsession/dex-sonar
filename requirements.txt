@@ -67,6 +67,7 @@ magic-filter==1.0.12
 MarkupSafe==2.1.5
 matplotlib==3.8.4
 matplotlib-inline==0.1.7
+memory-profiler==0.61.0
 mistune==3.0.2
 multidict==6.0.5
 munkres==1.1.4
@@ -91,7 +92,7 @@ platformdirs==4.2.2
 ply==3.11
 prometheus_client==0.20.0
 prompt_toolkit==3.0.47
-psutil==5.9.8
+psutil==6.0.0
 psycopg2==2.9.9
 ptyprocess==0.7.0
 pure-eval==0.2.2

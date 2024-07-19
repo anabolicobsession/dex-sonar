@@ -3,11 +3,15 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
-from .config.config import TESTING_MODE, USERS_DATABASE_NAME, MUTELISTS_DATABASE_NAME
-from .network.network import Token
+from dex_sonar.config.config import NOT_TESTING_MODE, config
+from dex_sonar.network.network import Token
 
 
 UserId = int
+
+
+USERS_DATABASE_NAME = config.get('Database Names', 'users')
+MUTELISTS_DATABASE_NAME = config.get('Database Names', 'mutelists')
 
 
 class Users:
@@ -44,7 +48,7 @@ class Users:
                 f'''
                     SELECT user_id FROM {USERS_DATABASE_NAME};
                 '''
-                if TESTING_MODE else
+                if NOT_TESTING_MODE else
                 f'''
                     SELECT user_id FROM {USERS_DATABASE_NAME} WHERE is_developer = TRUE;
                 '''

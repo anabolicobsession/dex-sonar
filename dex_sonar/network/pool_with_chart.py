@@ -1,3 +1,4 @@
+import gc
 from abc import ABC
 from collections import deque
 from contextlib import contextmanager
@@ -8,16 +9,15 @@ from enum import Enum
 from statistics import mean
 from typing import Self, Iterable, ForwardRef, Generator, Any
 
-from matplotlib import pyplot as plt, colormaps, cm
+from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.dates import DateFormatter
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
-import matplotlib.colors
 
-from ..config.config import config, TIMESTAMP_UNIT, TESTING_MODE
-from ..utils.circular_list import CircularList
-from .network import Pool as NetworkPool
+from dex_sonar.network.network import Pool as NetworkPool
+from dex_sonar.config.config import config, TIMESTAMP_UNIT, TESTING_MODE, NOT_TESTING_MODE
+from dex_sonar.utils.circular_list import CircularList
 
 
 Timeframe = datetime
@@ -370,8 +370,8 @@ class Pattern(Enum):
 
     DUMP = _PatternBody(
         PatternUnit(
-            -15,
-            max_timeframe=timedelta(hours=1)
+            -10,
+            max_timeframe=timedelta(minutes=30)
         ),
     )
 
@@ -457,23 +457,6 @@ class PlotSizeScheme:
     ratio: float = 0.25
 
 
-class ColorMap:
-    HEX = str
-
-    def __init__(self, name: str, n: int, exclude_from_beginning: int = 0, exclude_from_end: int = 0):
-        cmap = colormaps.get_cmap(name)
-        rgb_colors = [cmap(i / (exclude_from_beginning + n + exclude_from_end - 1)) for i in range(exclude_from_beginning, exclude_from_beginning + n)]
-        self.colors: tuple[ColorMap.HEX] = tuple(cm.colors.rgb2hex(x) for x in rgb_colors)
-        self.size = len(self.colors)
-
-    def get_hex(self, i):
-        return self.colors[i % self.size]
-
-    def generate_cmap(self) -> matplotlib.colors.LinearSegmentedColormap:
-        rgb_colors = tuple(matplotlib.colors.to_rgb(x) for x in self.colors)
-        return matplotlib.colors.LinearSegmentedColormap.from_list('my_cmap', rgb_colors, len(rgb_colors))
-
-
 @dataclass
 class ColorScheme:
     upward: Color = '#00c979'
@@ -499,6 +482,11 @@ class OpacityScheme:
 class MaxBinsScheme:
     x: int = None
     y: int = 6
+
+
+class Backend(Enum):
+    DEFAULT = ''
+    AGG = 'Agg'
 
 
 class Chart:
@@ -564,7 +552,8 @@ class Chart:
                                     not self.repetition_reset_cooldown or
                                     datetime.now(timezone.utc) - self.previous_pattern_end_timestamp < self.repetition_reset_cooldown
                             )
-                    )
+                    ) and
+                    NOT_TESTING_MODE
             ):
                 continue
 
@@ -616,12 +605,19 @@ class Chart:
             max_timeframe: timedelta = timedelta(hours=config.getint('Plot', 'max_timeframe')),
             price_in_percents=False,
             datetime_format='%d %H:%M',
+            backend=Backend.DEFAULT,
 
             color_scheme: ColorScheme = ColorScheme(),
             size_scheme: SizeScheme = SizeScheme(),
             opacity_scheme: OpacityScheme = OpacityScheme(),
             max_bins_scheme: MaxBinsScheme = MaxBinsScheme(),
     ) -> tuple[Pyplot, Figure, Axes, Axes]:
+
+        default_backend = plt.get_backend()
+
+        if backend is not Backend.DEFAULT:
+            plt.switch_backend(backend.value)
+
 
         tick_limit = max_timeframe // TIMESTAMP_UNIT
         ticks = self._pad_ticks()[-tick_limit:]
@@ -789,9 +785,16 @@ class Chart:
 
         yield plt, self.fig, ax1, ax2
 
+        if backend is not Backend.DEFAULT:
+            plt.switch_backend(default_backend)
 
         if self.fig:
             plt.close(self.fig)
+
+        plt.cla()
+        plt.clf()
+        plt.close('all')
+        gc.collect()
 
 
 @dataclass

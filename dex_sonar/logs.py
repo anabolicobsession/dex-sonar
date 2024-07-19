@@ -7,11 +7,10 @@ from .config.config import LOGGING_LEVEL, LOGGING_FORMAT
 def setup_logging():
     root_logger = getLogger()
     root_logger.setLevel(level=LOGGING_LEVEL)
-    logging_formatter = Formatter(LOGGING_FORMAT)
 
     handler = StreamHandler()
     handler.setLevel(LOGGING_LEVEL)
-    handler.setFormatter(logging_formatter)
+    handler.setFormatter(Formatter(LOGGING_FORMAT))
     root_logger.addHandler(handler)
 
     getLogger('asyncio').setLevel(logging.WARNING)

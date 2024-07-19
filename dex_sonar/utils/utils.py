@@ -1,5 +1,11 @@
-from math import floor, log10
 from datetime import datetime, timezone
+from math import floor, log10
+
+from dex_sonar.config.config import TIMEZONE
+
+
+def get_current_timestamp():
+    return datetime.now(TIMEZONE)
 
 
 def round_to_significant_figures(x, n=1):
