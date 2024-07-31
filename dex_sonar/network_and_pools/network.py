@@ -1,7 +1,8 @@
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from typing import Self
-from dataclasses import dataclass
+
+from dex_sonar.utils.time import Timestamp
 
 
 Id = str
@@ -12,20 +13,24 @@ class UnknownNetwork(Exception):
     ...
 
 
-@dataclass(frozen=True)
+@dataclass
 class _NetworkValue:
     id: Id
+    name: str
     native_token_address: Address
 
 
 class Network(Enum):
-    TON = _NetworkValue('ton', 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c')
+    TON = _NetworkValue('ton', 'TON', 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c')
 
     def __repr__(self):
-        return f'{type(self).__name__}({self.name})'
+        return f'{type(self).__name__}({self.value.name})'
 
     def get_id(self) -> Id:
         return self.value.id
+
+    def get_name(self):
+        return self.value.name
 
     def get_native_token_address(self) -> Address:
         return self.value.native_token_address
@@ -97,13 +102,13 @@ class Pool:
     dex: DEX
 
     price_native: float
-    liquidity: float
+    price_usd: float
+    fdv: float
     volume: float
-    price_change: TimePeriodsData
+    liquidity: float
 
-    price_usd: float = None
-    fdv: float = None
-    creation_date: datetime = None
+    price_change: TimePeriodsData
+    creation_date: Timestamp
 
     def __eq__(self, other):
         return isinstance(other, Pool) and self.address == other.address
@@ -120,10 +125,19 @@ class Pool:
         self.dex.update(other.dex)
 
         self.price_native = other.price_native
-        self.volume = other.volume
-        self.price_change = other.price_change
-
         self.price_usd = other.price_usd
-        self.liquidity = other.liquidity
         self.fdv = other.fdv
+        self.volume = other.volume
+        self.liquidity = other.liquidity
+
+        self.price_change = other.price_change
         self.creation_date = other.creation_date
+
+    def has_native_quote_token(self):
+        return self.quote_token.is_native_currency()
+
+    def get_name(self):
+        return self.base_token.ticker + '/' + self.quote_token.ticker
+
+    def get_shortened_name(self):
+        return self.base_token.ticker

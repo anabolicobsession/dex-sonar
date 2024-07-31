@@ -1,12 +1,22 @@
-import logging
+from math import ceil
+from typing import Sequence
 
-from pydantic import BaseModel, Field, AwareDatetime
+from pydantic import AwareDatetime, BaseModel, Field
 
-from .base_api import BaseAPI, JSON, UnsupportedSchema
+from dex_sonar.api.api import API, EmptyData, JSON, UnsupportedSchema
+from dex_sonar.api.request_limits import RequestLimits, SmartRateLimiter
+from dex_sonar.utils.time import Timedelta
 
 
 NetworkId = str
 Address = str
+
+
+def make_batches(sequence: Sequence, divider: int) -> list[Sequence]:
+    return [
+        sequence[i:divider + i]
+        for i in range(0, len(sequence), divider)
+    ]
 
 
 class Token(BaseModel):
@@ -49,43 +59,57 @@ class Pool(BaseModel):
 
     price_native: float = Field(..., alias='priceNative')
     price_usd: float = Field(default=None, alias='priceUsd')
-    liquidity: Liquidity = None
+    fdv: float = Field(default=None)
     volume: TimePeriodsData = Field(..., alias='volume')
-    fdv: float = None
+    liquidity: Liquidity = Field(default=None)
 
     price_change: TimePeriodsData = Field(..., alias='priceChange')
     transactions: TimePeriodsTransactionCounts = Field(..., alias='txns')
     creation_date: AwareDatetime = Field(default=None, alias='pairCreatedAt')
-    url: str
+    url: str = Field(...)
 
 
-class DEXScreenerAPI(BaseAPI):
-    BASE_URL = 'https://api.dexscreener.io/latest/dex'
+class DEXScreenerAPI(API):
+
+    NAME = 'DEX Screener API'
+    REQUEST_LIMITS = RequestLimits(
+        max=300,
+        time_period=Timedelta(minutes=1),
+    )
+    RATE_LIMITER_TYPE = SmartRateLimiter
+
     SCHEMA_VERSION = '1.0.0'
-    MAX_ADDRESSES = 30
+    MAX_ADDRESSES_PER_REQUEST = 30
 
-    def __init__(self, **params):
-        super().__init__(DEXScreenerAPI.BASE_URL, request_limit=300, **params)
+    def __init__(self, **kwargs):
+        super().__init__(
+            base_url='https://api.dexscreener.io/latest/dex',
+            **kwargs,
+        )
 
     async def _get_json(self, *url_path_segments) -> JSON:
-        json = (await self._get(*url_path_segments))[0]
+        json = await super()._get_json(*url_path_segments)
 
         if json['schemaVersion'] != DEXScreenerAPI.SCHEMA_VERSION:
             raise UnsupportedSchema(DEXScreenerAPI.SCHEMA_VERSION, json['schemaVersion'])
 
         return json
 
-    async def get_pools(
-            self,
-            network: NetworkId,
-            address_or_addresses: Address | list[Address]
-    ) -> list[Pool]:
+    async def get_pools(self, network: NetworkId, addresses: Address | Sequence[Address]) -> list[Pool]:
+        pools = []
 
-        pools_segment = address_or_addresses if isinstance(address_or_addresses, Address) else ','.join(address_or_addresses)
-        json = await self._get_json('pairs', network, pools_segment)
+        for batch in make_batches(
+            sequence=addresses if isinstance(addresses, Sequence) else [addresses],
+            divider=self.MAX_ADDRESSES_PER_REQUEST,
+        ):
+            json = await self._get_json('pairs', network, ','.join(batch))
 
-        if not json['pairs']:
-            logging.warning(f"Empty 'pairs' attribute for pool addresses:\n{','.join(address_or_addresses)}")
-            raise Exception()
+            if not json['pairs']:
+                raise EmptyData(f'Attribute \'pairs\' is empty for addresses:\n{",".join(addresses)}')
 
-        return [Pool(**pool_json) for pool_json in json['pairs']]
+            pools.extend([Pool(**pool_json) for pool_json in json['pairs']])
+
+        return pools
+
+    def estimate_requests_per_get_pools_call(self, number_of_pools):
+        return ceil(number_of_pools / self.MAX_ADDRESSES_PER_REQUEST)

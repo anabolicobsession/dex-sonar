@@ -1,91 +1,27 @@
-import asyncio
 import gc
 import logging
 from asyncio import CancelledError
-from collections.abc import Iterable
-from datetime import timedelta
 from io import BytesIO
 from os import environ
 
-import psutil
 from aiogram import html
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import NetworkError
+from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from dex_sonar.bot import Bot
-from dex_sonar.config.config import config, TESTING_MODE, NETWORK
+from dex_sonar.config.config import NETWORK_ID, TESTING_MODE, config
 from dex_sonar.logs import setup_logging
-from dex_sonar.network.network import Token
-from dex_sonar.network.pool_with_chart import Pool, TrendsView, PlotSizeScheme, SizeScheme, OpacityScheme, MaxBinsScheme, Backend
-from dex_sonar.network.pools_with_api import PoolsWithAPI
+from dex_sonar.network_and_pools.network import Network, Token
+from dex_sonar.network_and_pools.pool_with_chart import Backend, MaxBinsScheme, PlotSizeScheme, Pool, SizeScheme, TrendsView
+from dex_sonar.network_and_pools.pools_with_api import PoolsWithAPI
 from dex_sonar.users import Users
-from dex_sonar.utils.utils import format_number, difference_to_pretty_str, get_current_timestamp
+from dex_sonar.utils.time import Cooldown, Timedelta
+from dex_sonar.utils.utils import format_number
 
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-
-def pools_to_message(
-        pools: Iterable[Pool],
-        pattern_message: str,
-        prefix: str | tuple[str, str] | None = None,
-        postfix: str | tuple[str, str] | None = None,
-        line_width=35,
-):
-    pool_message = ''
-
-    def spaces(n):
-        return ' ' * n
-
-    def fit_prefix_or_postfix(x):
-        if x:
-            if isinstance(x, str):
-                return html.code(spaces((line_width - len(x)) // 2) + x)
-            else:
-                left, right = x
-                return html.code(left + spaces(line_width - (len(left) + len(right))) + right)
-        return None
-
-    prefix, postfix = fit_prefix_or_postfix(prefix), fit_prefix_or_postfix(postfix)
-
-    def get_updated_message_pools(message_pool):
-        return pool_message + ('\n\n' if pool_message else '') + message_pool
-
-    def get_full_message(pool_message):
-        return '\n\n'.join(filter(bool, [prefix, pool_message, postfix]))
-
-    def add_line(str1, str2=None):
-        if str2 is None:
-            lines.append(str1)
-            return
-        lines.append(f'{str1}{spaces(line_width - (len(str1) + len(str2)))}{str2}')
-
-    for i, pool in enumerate(pools):
-        lines = []
-
-        add_line(
-            (pool.base_token.ticker if pool.quote_token.is_native_currency() else pool.base_token.ticker + '/' + pool.quote_token.ticker),
-            pattern_message,
-        )
-
-        if pool.liquidity: add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
-        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
-        if pool.creation_date: add_line('Age:', difference_to_pretty_str(pool.creation_date))
-
-        add_line(
-            'Price:',
-            format_number(pool.price_native, 1, 9, significant_figures=2) + ' ' + NETWORK.name + ' ' +
-            format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2),
-        )
-
-        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{NETWORK.get_id()}/pools/{pool.address}')
-        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{NETWORK.get_id()}/{pool.address}')
-        links = geckoterminal + html.code(spaces(line_width - 22)) + dex_screener
-
-        pool_message = get_updated_message_pools(html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address))
-
-    return get_full_message(pool_message)
 
 
 class Application:
@@ -94,20 +30,34 @@ class Application:
             token=environ.get('BOT_TOKEN') if not TESTING_MODE else environ.get('TESTING_BOT_TOKEN'),
             token_silent=environ.get('SILENT_BOT_TOKEN') if not TESTING_MODE else environ.get('TESTING_SILENT_BOT_TOKEN'),
         )
-
         self.pools = PoolsWithAPI(
+            additional_cooldown=Timedelta.from_other(config.get_timedelta_from_seconds('Updates', 'additional_cooldown')),
+            callback_coroutine=self.send_messages_if_patterns_detected,
+
+            do_intermediate_updates=config.getboolean('Updates', 'do_intermediate_updates'),
+            intermediate_update_duration=(
+                Timedelta.from_other(config.get_timedelta_from_seconds('Updates', 'intermediate_update_duration'))
+                if config.has_option('Updates', 'intermediate_update_duration')
+                else None
+            ),
+            starting_intermediate_update_duration_estimate=Timedelta.from_other(config.get_timedelta_from_seconds('Updates', 'starting_intermediate_update_duration_estimate')),
+
+            fetch_new_pools_every_update=config.getint('Updates', 'fetch_new_pools_every_update'),
+            dex_screener_delay=Timedelta.from_other(config.get_timedelta_from_seconds('Screeners', 'dex_screener_delay')),
+
             pool_filter=(
                 lambda x:
-                x.liquidity > config.getint('Pools', 'min_liquidity') and
-                x.volume > config.getint('Pools', 'min_volume')
+                x.liquidity >= config.getint('Pools', 'min_liquidity') and
+                x.volume >= config.getint('Pools', 'min_volume')
             ),
-            repeated_pool_filter_key=(
-                lambda x:
-                x.volume
+
+            request_error_cooldown=Cooldown(
+                cooldown=Timedelta(seconds=0.9375),  # 60 / 64 (binary powers of minute)
+                multiplier=2,
+                within_time_period=Timedelta(minutes=20),
             ),
         )
         self.users: Users = Users()
-        self.cooldown = config.getfloat('Pools', 'update_cooldown')
 
         self.bot.add_handlers([
             CallbackQueryHandler(self.serve_mute_button),
@@ -122,61 +72,26 @@ class Application:
             InlineKeyboardButton('Unmute', callback_data='0'),
         ]])
 
-        self.start_timestamp = None
-        self.cycles = 0
-        self.last_memory_usage = None
-
     def run(self):
-        self.bot.run(self.run_main_loop())
+        self.bot.run(self._run())
 
-    async def run_main_loop(self):
+    async def _run(self):
         try:
             await self.bot.set_description('Live')
-            while True: await self.run_cycle()
+            while True: await self.pools.update_via_api()
 
         except CancelledError:
             logger.info(f'Stopping the bot')
+
+        except NetworkError as e:
+            logger.error(f'Caught telegram network error: {e}')
 
         finally:
             await self.bot.set_description(None)
             await self.pools.close_api_sessions()
             self.users.close_connection()
 
-    async def run_cycle(self):
-        self.log_debug_info()
-
-        logger.info('Updating pools')
-        await self.pools.update_using_api()
-        logger.info(f'Pools: {len(self.pools)}')
-
-        await self.send_messages_if_patterns_detected()
-
-        logger.info(f'Sleep for {self.cooldown:.0f}s\n')
-        await asyncio.sleep(self.cooldown)
-
-    def log_debug_info(self):
-        if logger.isEnabledFor(logging.DEBUG):
-
-            if not self.start_timestamp: self.start_timestamp = get_current_timestamp()
-            minutes = (get_current_timestamp() - self.start_timestamp).total_seconds() / 60
-            ram = psutil.virtual_memory()
-
-            logger.debug(
-                ' - '.join([
-                    f'General info',
-                    f'Cycles: {self.cycles:3}',
-                    f'Time: {minutes:4.0f}m',
-                    f'Speed: {self.cycles / minutes:3.1f} cycles/s',
-                    f'Memory change: {(ram.used - (self.last_memory_usage if self.last_memory_usage else ram.used)) / 1024 ** 2:+4.0f} MiB',
-                    f'Memory usage: {ram.used / 1024 ** 2:5.0f} MiB / {ram.total / 1024 ** 2 :5.0f} MiB',
-                ])
-            )
-
-            self.last_memory_usage = ram.used
-            self.cycles += 1
-
     async def send_messages_if_patterns_detected(self):
-        logger.info(f'Checking for patterns')
         tuples = []
 
         for pool in self.pools:
@@ -195,9 +110,6 @@ class Application:
 
                         size_scheme=SizeScheme(
                             tick=15,
-                        ),
-                        opacity_scheme=OpacityScheme(
-                            # volume=0.4,
                         ),
                         max_bins_scheme=MaxBinsScheme(
                             x=5,
@@ -223,11 +135,10 @@ class Application:
 
         if tuples:
             tuples.sort(key=lambda x: x[1].magnitude, reverse=True)
-            logger.info(f'Pools with patterns: {len(tuples)}')
+            tickers = [x[0].base_token.ticker for x in tuples]
+            logger.info(f'Detected pools with patterns: {", ".join(tickers)} - Sending messages (if a token is not muted)')
         else:
-            logger.info('No patterns found')
             return
-
 
         for user_id in self.users.get_user_ids():
 
@@ -236,9 +147,10 @@ class Application:
                 if not self.users.is_muted(user_id, pool.base_token):
 
                     pattern_message = match.pattern.get_name() + f' {match.magnitude:.0%}'
+
                     await self.bot.send_message(
                         user_id,
-                        pools_to_message([pool], pattern_message),
+                        self.pool_to_message(pool, pattern_message),
                         plot_buffer,
                         reply_markup=self.reply_markup_mute,
                         silent=not match.significant
@@ -246,6 +158,34 @@ class Application:
 
                     plot_buffer.close()
                     gc.collect()
+
+    @staticmethod
+    def pool_to_message(pool: Pool, append: str, width: int = config.getint('Message', 'width')):
+        lines = []
+
+        def add_line(a: str, b: str):
+            chars_left = width - len(a) - len(b)
+            lines.append(f'{a}{" " * chars_left}{b}')
+
+        add_line(pool.get_shortened_name() if pool.has_native_quote_token() else pool.get_name(), append)
+        add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
+        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
+        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
+        add_line('Age:', pool.creation_date.time_elapsed().to_human_readable_format())
+        add_line('Price:', format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2))
+
+        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{pool.network.get_id()}/pools/{pool.address}')
+        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{pool.network.from_id(NETWORK_ID).get_id()}/{pool.address}')
+        links = geckoterminal + html.code(' ' * (width - 22)) + dex_screener
+
+        if pool.network is Network.TON:
+            # def ticker_to_url_format(ticker: str)
+            #     return ticker
+
+            swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={1}&st=TCAT&fa=83')
+            pass
+
+        return html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address)
 
     def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]
@@ -286,7 +226,7 @@ class Application:
 
         if option:
             if option > 0:
-                self.users.mute_for(user_id, token, timedelta(days=option))
+                self.users.mute_for(user_id, token, Timedelta(days=option))
             else:
                 self.users.mute_forever(user_id, token)
 

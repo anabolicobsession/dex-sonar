@@ -1,11 +1,4 @@
-from datetime import datetime, timezone
 from math import floor, log10
-
-from dex_sonar.config.config import TIMEZONE
-
-
-def get_current_timestamp():
-    return datetime.now(TIMEZONE)
 
 
 def round_to_significant_figures(x, n=1):
@@ -67,47 +60,3 @@ def format_number(
     if percent: s += '%'
 
     return ' ' * max(left, 0) + s + ' ' * max(right, 0)
-
-
-MINUTE = 60
-MINUTE_STR = 'min'
-
-HOUR = MINUTE * 60
-HOUR_STR = 'hour'
-
-DAY = HOUR * 24
-DAY_STR = 'day'
-
-MONTH = DAY * 30
-MONTH_STR = 'month'
-
-YEAR = DAY * 365
-YEAR_STR = 'year'
-
-def difference_to_pretty_str(timestamp: datetime):
-    seconds = (datetime.now(timezone.utc) - timestamp).total_seconds()
-
-    if seconds < MINUTE * 2:
-        return str(int(seconds / MINUTE)) + ' ' + MINUTE_STR
-    elif seconds < MINUTE * 60:
-        return str(int(seconds / MINUTE)) + ' ' + MINUTE_STR + 's'
-
-    elif seconds < HOUR * 2:
-        return str(int(seconds / HOUR)) + ' ' + HOUR_STR
-    elif seconds < HOUR * 24:
-        return str(int(seconds / HOUR)) + ' ' + HOUR_STR + 's'
-
-    elif seconds < DAY * 2:
-        return str(int(seconds / DAY)) + ' ' + DAY_STR
-    elif seconds < DAY * 30:
-        return str(int(seconds / DAY)) + ' ' + DAY_STR + 's'
-
-    elif seconds < MONTH * 2:
-        return str(int(seconds / MONTH)) + ' ' + MONTH_STR
-    elif seconds < MONTH * 12:
-        return str(int(seconds / MONTH)) + ' ' + MONTH_STR + 's'
-
-    elif seconds < YEAR * 2:
-        return str(int(seconds / YEAR)) + ' ' + YEAR_STR
-    else:
-        return str(int(seconds / YEAR)) + ' ' + YEAR_STR + 's'

@@ -4,14 +4,15 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 
 from dex_sonar.config.config import NOT_TESTING_MODE, config
-from dex_sonar.network.network import Token
+from dex_sonar.network_and_pools.network import Token
 
 
 UserId = int
 
 
-USERS_DATABASE_NAME = config.get('Database Names', 'users')
-MUTELISTS_DATABASE_NAME = config.get('Database Names', 'mutelists')
+prefix = config.get('Database Names', 'prefix')
+USERS_DATABASE_NAME = prefix + config.get('Database Names', 'users')
+MUTELISTS_DATABASE_NAME = prefix + config.get('Database Names', 'mutelists')
 
 
 class Users:

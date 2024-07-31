@@ -1,21 +1,56 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Iterable
 
-from pydantic import BaseModel, Field, AwareDatetime
+from pydantic import AwareDatetime, BaseModel, Field
 
-from .base_api import BaseAPI, JSON, EmptyData
+from dex_sonar.api.api import API, EmptyData, JSON
+from dex_sonar.api.request_limits import RequestLimits, StrictRateLimiter
+from dex_sonar.utils.time import Timedelta
 
 
 NetworkId = str
 Address = str
-Page = int
-PageInterval = tuple[Page, Page]
+
+
+class ValueOutOfDomain(Exception):
+    ...
 
 
 class PoolSource(Enum):
     TOP = ''
     TRENDING = 'trending_'
+
+
+class Page:
+
+    Type = int
+    MIN = 1
+    MAX = 10
+
+    def __init__(self, page: Type):
+        if not self.MIN <= page <= self.MAX:
+            raise ValueOutOfDomain(
+                f'Page number {page} is out of range [{self.MIN}, {self.MAX}]'
+            )
+        self.page = page
+
+
+class PageInterval:
+    def __init__(self, start: Page.Type, end: Page.Type):
+        self.start = Page(start)
+        self.end = Page(end)
+        if not self.start.page <= self.end.page:
+            raise ValueError(
+                f'Start page {self.start.page} can\'t come after end page {self.end.page}'
+            )
+
+    def __iter__(self):
+        return iter(range(self.start.page, self.end.page + 1))
+
+
+AllPages = PageInterval(Page.MIN, Page.MAX)
 
 
 class SortBy(Enum):
@@ -58,45 +93,66 @@ class Candlestick(BaseModel):
     volume: float = Field(...)
 
 
-class GeckoTerminalAPI(BaseAPI):
-    BASE_URL = 'https://api.geckoterminal.com/api/v2'
+class GeckoTerminalAPI(API):
 
-    MIN_PAGE = 1
-    MAX_PAGE = 10
-    ALL_PAGES = (MIN_PAGE, MAX_PAGE)
+    NAME = 'GeckoTerminal API'
+    REQUEST_LIMITS = RequestLimits(
+        max=30,
+        time_period=Timedelta(minutes=1),
+    )
+    RATE_LIMITER_TYPE = StrictRateLimiter
 
-    def __init__(self, **params):
-        super().__init__(GeckoTerminalAPI.BASE_URL, request_limit=30, **params)
+    def __init__(self, **kwargs):
+        super().__init__(
+            base_url='https://api.geckoterminal.com/api/v2',
+            **kwargs,
+        )
 
     async def _get_json(self, *url_path_segments, **params) -> JSON:
-        return (await self._get(*url_path_segments, **params))[0]
+        return await super()._get_json(*url_path_segments, **params)
 
     async def get_pools(
             self,
-            network_id: NetworkId,
-            pool_source: PoolSource = PoolSource.TOP,
-            pages: Page or PageInterval = MIN_PAGE,
+            network: NetworkId,
+            pool_sources: PoolSource | Iterable[PoolSource] = PoolSource.TOP,
+            pages: Page | PageInterval = Page.MIN,
             sort_by: SortBy = SortBy.TRANSACTIONS
     ) -> list[Pool]:
 
-        pages = (pages,) if isinstance(pages, int) else range(pages[0], pages[1] + 1)
         pools = []
 
-        for page in pages:
-            response_json = await self._get_json(
-                'networks', network_id, pool_source.value + 'pools',
-                params={
-                    'page': page,
-                    'sort': sort_by.value,
-                }
-            )
-            pools.extend([Pool(**{'network_id': network_id, **pool_json['attributes']}) for pool_json in response_json['data']])
+        for pool_source in pool_sources if isinstance(pool_sources, Iterable) else [pool_sources]:
+
+            for page in pages if isinstance(pages, PageInterval) else PageInterval(Page, Page):
+
+                json = await self._get_json(
+                    'networks', network, pool_source.value + 'pools',
+                    params={
+                        'page': page,
+                        'sort': sort_by.value,
+                    }
+                )
+
+                if pools_json := json['data']:
+                    pools.extend(
+                        [
+                            Pool(
+                                **{
+                                    'network_id': network,
+                                    **pool_json['attributes']
+                                }
+                            )
+                            for pool_json in pools_json
+                        ]
+                    )
+                else:
+                    break
 
         return pools
 
     async def get_ohlcv(
             self,
-            network_id: NetworkId,
+            network: NetworkId,
             pool_address: Address,
             timeframe: Timeframe.Day | Timeframe.Hour | Timeframe.Minute = Timeframe.Day.ONE,
             currency: Currency = Currency.USD,
@@ -104,7 +160,7 @@ class GeckoTerminalAPI(BaseAPI):
     ) -> list[Candlestick]:
 
         json = await self._get_json(
-            'networks', network_id, 'pools', pool_address, 'ohlcv', timeframe.__class__.__name__.lower(),
+            'networks', network, 'pools', pool_address, 'ohlcv', timeframe.__class__.__name__.lower(),
             params={
                 'aggregate': timeframe.value,
                 'currency': currency.value,

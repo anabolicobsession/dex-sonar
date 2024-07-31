@@ -4,10 +4,9 @@ from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from enum import Enum
 from statistics import mean
-from typing import Self, Iterable, ForwardRef, Generator, Any
+from typing import Any, ForwardRef, Generator, Iterable, Self
 
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
@@ -15,22 +14,24 @@ from matplotlib.dates import DateFormatter
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
-from dex_sonar.network.network import Pool as NetworkPool
-from dex_sonar.config.config import config, TIMESTAMP_UNIT, TESTING_MODE, NOT_TESTING_MODE
+from dex_sonar.config.config import TESTING_MODE, config
+from dex_sonar.network_and_pools.network import Pool as NetworkPool
 from dex_sonar.utils.circular_list import CircularList
+from dex_sonar.utils.time import Timedelta, Timestamp
 
 
-Timeframe = datetime
+Timeframe = Timedelta
 Significance = bool
 Magnitude = float
 Pyplot = Any
 Color = str
 
+TIMESTAMP_UNIT = Timedelta(minutes=1)
 
 plt.rcParams.update({'mathtext.default': 'regular'})
 
 
-@dataclass(frozen=True)
+@dataclass
 class _AbstractDataclass(ABC):
     def __new__(cls, *args, **kwargs):
         if cls == _AbstractDataclass or cls.__bases__[0] == _AbstractDataclass:
@@ -38,35 +39,35 @@ class _AbstractDataclass(ABC):
         return super().__new__(cls)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Tick(_AbstractDataclass):
-    timestamp: datetime
+    timestamp: Timestamp
     price: float
 
     def __repr__(self):
         return f'{type(self).__name__}({self.timestamp.strftime("%m-%d %H:%M:%S")}, {self.price})'
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(repr=False)
 class CompleteTick(Tick):
     volume: float
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(repr=False)
 class IncompleteTick(Tick):
     ...
 
 
-@dataclass(frozen=True)
+@dataclass
 class Trend:
     change: float
-    start_timestamp: datetime
-    end_timestamp: datetime
+    start_timestamp: Timestamp
+    end_timestamp: Timestamp
 
     def is_upward(self):
         return self.change > 0
 
-    def get_timeframe(self) -> timedelta:
+    def get_timeframe(self) -> Timedelta:
         return self.end_timestamp - self.start_timestamp
 
     def get_magnitude(self):
@@ -93,7 +94,7 @@ class Trends:
     def __init__(
             self,
             ticks_or_trends: Iterable[Tick] | Self,
-            max_timeframe: timedelta = None,
+            max_timeframe: Timedelta = None,
             max_magnitude: float = None,
     ):
         self.trends: deque[Trend] | None = None
@@ -223,7 +224,7 @@ class Trends:
 
 @dataclass
 class _TrendsViewValue:
-    max_timeframe: timedelta = None
+    max_timeframe: Timeframe = None
     max_magnitude: float = None
 
     def __post_init__(self):
@@ -233,15 +234,15 @@ class _TrendsViewValue:
 class TrendsView(Enum):
 
     TIMEFRAME_10M = _TrendsViewValue(
-        max_timeframe=timedelta(minutes=10),
+        max_timeframe=Timeframe(minutes=10),
     )
 
     TIMEFRAME_15M = _TrendsViewValue(
-        max_timeframe=timedelta(minutes=15),
+        max_timeframe=Timeframe(minutes=15),
     )
 
     TIMEFRAME_30M = _TrendsViewValue(
-        max_timeframe=timedelta(minutes=30),
+        max_timeframe=Timeframe(minutes=30),
     )
 
     GLOBAL = _TrendsViewValue()
@@ -266,8 +267,8 @@ class TrendsView(Enum):
 @dataclass
 class PatternUnit:
     min_change: float
-    min_timeframe: timedelta = None
-    max_timeframe: timedelta = None
+    min_timeframe: Timeframe = None
+    max_timeframe: Timeframe = None
 
     def __post_init__(self):
         self.min_change /= 100
@@ -298,8 +299,8 @@ class PatternUnit:
 
 @dataclass
 class _PatternMatchBody:
-    start_timestamp: datetime
-    end_timestamp: datetime
+    start_timestamp: Timestamp
+    end_timestamp: Timestamp
     significant: Significance
     magnitude: Magnitude
 
@@ -334,7 +335,7 @@ class _PatternBody:
             self,
             trends: Trends,
             pool: NetworkPool,
-            delay_tolerance: timedelta = None,
+            delay_tolerance: Timeframe = None,
     ) -> _PatternMatchBody | None:
 
         if (
@@ -370,15 +371,15 @@ class Pattern(Enum):
 
     DUMP = _PatternBody(
         PatternUnit(
-            -10,
-            max_timeframe=timedelta(minutes=30)
+            -8,
+            max_timeframe=Timeframe(minutes=30)
         ),
     )
 
     DOWNTREND = _PatternBody(
         PatternUnit(
             -30,
-            max_timeframe=timedelta(hours=2)
+            max_timeframe=Timeframe(hours=2)
         ),
         significance_threshold=100000,
     )
@@ -386,11 +387,11 @@ class Pattern(Enum):
     REVERSAL = _PatternBody(
         PatternUnit(
             -30,
-            min_timeframe=timedelta(hours=2)
+            min_timeframe=Timeframe(hours=2)
         ),
         PatternUnit(
             10,
-            min_timeframe=timedelta(minutes=30)
+            min_timeframe=Timeframe(minutes=30)
         ),
         significance_threshold=100000,
     )
@@ -399,7 +400,7 @@ class Pattern(Enum):
     PUMP = _PatternBody(
         PatternUnit(
             50,
-            max_timeframe=timedelta(hours=1)
+            max_timeframe=Timeframe(hours=1)
         ),
         significance_threshold=100000,
     )
@@ -407,7 +408,7 @@ class Pattern(Enum):
     UPTREND = _PatternBody(
         PatternUnit(
             20,
-            min_timeframe=timedelta(hours=2)
+            min_timeframe=Timeframe(hours=2)
         ),
         significance_threshold=100000,
     )
@@ -415,7 +416,7 @@ class Pattern(Enum):
     SLOW_UPTREND = _PatternBody(
         PatternUnit(
             10,
-            min_timeframe=timedelta(hours=12)
+            min_timeframe=Timeframe(hours=12)
         ),
         significance_threshold=100000,
     )
@@ -434,7 +435,7 @@ class Pattern(Enum):
         trends_views = TrendsView.generate_all(ticks)
 
         for trends in trends_views:
-            if match_body := self.value.match(trends, pool, delay_tolerance=timedelta(minutes=config.getint('Patterns', 'delay_tolerance'))):
+            if match_body := self.value.match(trends, pool, delay_tolerance=Timeframe(minutes=config.getint('Patterns', 'delay_tolerance'))):
                 yield PatternMatch(self, match_body)
 
     @staticmethod
@@ -447,7 +448,7 @@ class Pattern(Enum):
 
             for trends in trends_views:
 
-                if match_body := pattern.value.match(trends, pool, delay_tolerance=timedelta(minutes=config.getint('Patterns', 'delay_tolerance'))):
+                if match_body := pattern.value.match(trends, pool, delay_tolerance=Timeframe(minutes=config.getint('Patterns', 'delay_tolerance'))):
                     yield PatternMatch(pattern, match_body)
 
 
@@ -493,8 +494,8 @@ class Chart:
     def __init__(self, pool: NetworkPool):
         self.ticks: CircularList[Tick] = CircularList(capacity=config.getint('Chart', 'max_ticks'))
         self.pool: NetworkPool = pool
-        self.previous_pattern_end_timestamp = None
-        self.repetition_reset_cooldown = timedelta(hours=config.getint('Patterns', 'repetition_reset_cooldown'))
+        self.previous_pattern_end_timestamp: Timestamp = None
+        self.repetition_reset_cooldown = Timeframe(hours=config.getint('Patterns', 'repetition_reset_cooldown'))
         self.fig: Figure | None = None
 
     def __len__(self):
@@ -511,7 +512,11 @@ class Chart:
 
         return type(self).__name__ + '(' + ', '.join(properties)  + ')'
 
+    def is_empty(self):
+        return len(self.ticks) == 0
+
     def update(self, new_ticks: Tick | list[Tick]):
+
         if isinstance(new_ticks, Tick):
 
             if isinstance(new_ticks, IncompleteTick) and next(
@@ -550,10 +555,9 @@ class Chart:
                             match.start_timestamp < self.previous_pattern_end_timestamp and
                             (
                                     not self.repetition_reset_cooldown or
-                                    datetime.now(timezone.utc) - self.previous_pattern_end_timestamp < self.repetition_reset_cooldown
+                                    self.previous_pattern_end_timestamp.time_elapsed() < self.repetition_reset_cooldown
                             )
-                    ) and
-                    NOT_TESTING_MODE
+                    )
             ):
                 continue
 
@@ -602,7 +606,7 @@ class Chart:
             mark_pattern_every_tick: int | None = None,
 
             plot_size_scheme: PlotSizeScheme = PlotSizeScheme(),
-            max_timeframe: timedelta = timedelta(hours=config.getint('Plot', 'max_timeframe')),
+            max_timeframe: Timeframe = Timeframe(hours=config.getint('Plot', 'max_timeframe')),
             price_in_percents=False,
             datetime_format='%d %H:%M',
             backend=Backend.DEFAULT,
@@ -733,7 +737,7 @@ class Chart:
         ax2.margins(x=0, y=0)
 
         xmin, xmax = ax1.get_xlim()
-        xtimestamp = TIMESTAMP_UNIT / timedelta(days=1)
+        xtimestamp = TIMESTAMP_UNIT / Timedelta(days=1)
         deviation = 2
         ax1.set_xlim(
             xmin=xmin - xtimestamp * deviation,
@@ -805,7 +809,7 @@ class Pool(NetworkPool):
         self.chart = Chart(pool=self)
 
     def __eq__(self, other):
-        return isinstance(other, Pool) and super().__eq__(other)
+        return isinstance(other, NetworkPool) and super().__eq__(other)
 
     def __hash__(self):
         return super().__hash__()

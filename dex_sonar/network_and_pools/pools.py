@@ -1,15 +1,24 @@
-from typing import Callable, TypeVar, Iterable, Any
+from datetime import timedelta
+from typing import Callable, Iterable, Iterator, TypeVar
 
-from .network import Pool, Token, DEX
+from dex_sonar.network_and_pools.network import DEX, Token
+from dex_sonar.network_and_pools.pool_with_chart import IncompleteTick, Pool
+from dex_sonar.utils.time import Timestamp
+
+
+def floor_timestamp_to_minutes(timestamp: Timestamp) -> Timestamp:
+    return timestamp - timedelta(
+        seconds=timestamp.second,
+        microseconds=timestamp.microsecond,
+    )
 
 
 T = TypeVar('T')
 
 class SetWithGet(set):
-    def my_get(self, element, default = None) -> Any | None:
+    def get(self, item: T, default=None) -> T | None:
         for x in self:
-            if x == element:
-                return x
+            if x == item: return x
         return default
 
 
@@ -37,7 +46,7 @@ class Pools:
     def __len__(self):
         return len(self.pools)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Pool]:
         return iter(self.pools)
 
     def get_tokens(self) -> list[Token]:
@@ -47,32 +56,41 @@ class Pools:
         return [x for x in self.dexes]
 
     def _ensure_consistent_token_and_dex_references(self, pool: Pool):
-        if x := self.tokens.my_get(pool.base_token):
+        if x := self.tokens.get(pool.base_token):
             x.update(pool.base_token)
             pool.base_token = x
         else:
             self.tokens.add(pool.base_token)
 
-        if x := self.tokens.my_get(pool.quote_token):
+        if x := self.tokens.get(pool.quote_token):
             x.update(pool.quote_token)
             pool.quote_token = x
         else:
             self.tokens.add(pool.quote_token)
 
-        if x := self.dexes.my_get(pool.dex):
+        if x := self.dexes.get(pool.dex):
             x.update(pool.dex)
             pool.dex = x
         else:
             self.dexes.add(pool.dex)
 
     def _update(self, pool: Pool):
-        if existing_pool := self.pools.my_get(pool):
+        if existing_pool := self.pools.get(pool):
             existing_pool.update(pool)
         else:
             self.pools.add(pool)
 
-    def update(self, pools: Pool | Iterable[Pool]):
-        for pool in [pools] if isinstance(pools, Pool) else pools:
+    def update(
+            self,
+            pools: Pool | Iterable[Pool],
+            timestamp_of_update: Timestamp = None,
+    ):
+        if not timestamp_of_update:
+            timestamp_of_update = Timestamp.now()
+
+        for pool in pools if isinstance(pools, Iterable) else [pools]:
+
+            previous_price_native = self.pools.get(pool).price_native if pool in self.pools else None
 
             if self.pool_filter and not self.pool_filter(pool):
                 continue
@@ -95,6 +113,14 @@ class Pools:
 
             self._ensure_consistent_token_and_dex_references(pool)
             self._update(pool)
+
+            if pool.price_native != previous_price_native or pool.chart.is_empty():
+                pool.chart.update(
+                    IncompleteTick(
+                        timestamp=floor_timestamp_to_minutes(timestamp_of_update),
+                        price=pool.price_native,
+                    )
+                )
 
     def apply_filter(self):
         if self.pools and self.pool_filter:
