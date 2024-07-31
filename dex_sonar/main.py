@@ -178,14 +178,19 @@ class Application:
         dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{pool.network.from_id(NETWORK_ID).get_id()}/{pool.address}')
         links = geckoterminal + html.code(' ' * (width - 22)) + dex_screener
 
-        if pool.network is Network.TON:
-            # def ticker_to_url_format(ticker: str)
-            #     return ticker
+        if (network := pool.network) is Network.TON:
+            def ticker_to_url_ticker(ticker: str):
+                return ticker.replace(' ', '+')
 
-            swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={1}&st=TCAT&fa=83')
-            pass
+            tonviewer = html.link('Tonviewer', f'https://tonviewer.com/{pool.address}')
+            swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={ticker_to_url_ticker(network.get_name())}&st={pool.base_token.ticker}')
+            links += '\n' + tonviewer + html.code(' ' * (width - 18)) + ' ' + swap_coffee
 
-        return html.code('\n'.join(lines)) + '\n' + links + '\n' + html.code(pool.base_token.address)
+        return '\n'.join([
+            html.code('\n'.join(lines)),
+            links,
+            html.code(pool.base_token.address),
+        ])
 
     def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]

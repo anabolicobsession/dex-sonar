@@ -206,8 +206,7 @@ class PoolsWithAPI(Pools):
             lines = []
 
             for p in self:
-                name = f'{p.get_shortened_name()}:'
-                lines.append(f'{name:10} {p.chart}')
+                lines.append(f'{p.get_shortened_name()}: {p.chart}')
 
             logger.debug('Pools:\n' + '\n'.join(lines))
 
