@@ -96,10 +96,11 @@ class DEXScreenerAPI(API):
         return json
 
     async def get_pools(self, network: NetworkId, addresses: Address | Sequence[Address]) -> list[Pool]:
+        if isinstance(addresses, Address): addresses = [addresses]
         pools = []
 
         for batch in make_batches(
-            sequence=addresses if isinstance(addresses, Sequence) else [addresses],
+            sequence=addresses,
             divider=self.MAX_ADDRESSES_PER_REQUEST,
         ):
             json = await self._get_json('pairs', network, ','.join(batch))

@@ -10,7 +10,7 @@ from telegram.error import NetworkError
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from dex_sonar.bot import Bot
-from dex_sonar.config.config import NETWORK_ID, TESTING_MODE, config
+from dex_sonar.config.config import NETWORK_ID, TESTING_MODE, USER_TIMEZONE, config
 from dex_sonar.logs import setup_logging
 from dex_sonar.network_and_pools.network import Network, Token
 from dex_sonar.network_and_pools.pool_with_chart import Backend, MaxBinsScheme, PlotSizeScheme, Pool, SizeScheme, TrendsView
@@ -107,6 +107,7 @@ class Application:
                             ratio=0.5,
                         ),
                         datetime_format='%H:%M',
+                        specific_timezone=USER_TIMEZONE,
 
                         size_scheme=SizeScheme(
                             tick=15,

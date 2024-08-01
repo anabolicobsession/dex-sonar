@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Self
 
 from dex_sonar.config.config import TIMEZONE
 
@@ -63,14 +62,14 @@ class Timedelta(timedelta):
     ]
 
     @classmethod
-    def from_other(cls, other: timedelta):
+    def from_other(cls, other: timedelta) -> Self:
         return cls(
             days=other.days,
             seconds=other.seconds,
             microseconds=other.microseconds,
         )
 
-    def positive_difference(self, other: timedelta) -> Timedelta:
+    def positive_difference(self, other: timedelta) -> Self:
         return max(self - other, Timedelta())
 
     def to_human_readable_format(self):
@@ -84,15 +83,15 @@ class Timedelta(timedelta):
             if seconds < next_time_unit.in_seconds:
                 return time_unit.to_string(seconds)
 
-    def __add__(self, other: timedelta) -> Timedelta:
+    def __add__(self, other: timedelta) -> Self:
         return self.from_other(super().__add__(other))
 
     __radd__ = __add__
 
-    def __sub__(self, other: timedelta) -> Timedelta:
+    def __sub__(self, other: timedelta) -> Self:
         return self.from_other(super().__sub__(other))
 
-    def __rsub__(self, other: timedelta) -> Timedelta:
+    def __rsub__(self, other: timedelta) -> Self:
         return self.from_other(super().__rsub__(other))
 
 
@@ -111,7 +110,7 @@ class Timestamp(datetime):
         )
 
     @classmethod
-    def now(cls, tz=TIMEZONE) -> Timestamp:
+    def now(cls, tz=TIMEZONE) -> Self:
         return cls.from_other(super().now(tz))
 
     @classmethod
@@ -133,12 +132,12 @@ class Timestamp(datetime):
     def positive_difference(self, other: datetime) -> Timedelta:
         return max(self - other, Timedelta())
 
-    def __add__(self, other: timedelta) -> Timestamp:
+    def __add__(self, other: timedelta) -> Self:
         return self.from_other(super().__add__(other))
 
     __radd__ = __add__
 
-    def __sub__(self, other: datetime | timedelta) -> Timestamp | Timedelta:
+    def __sub__(self, other: datetime | timedelta) -> Self | Timedelta:
         object = super().__sub__(other)
         return self.from_other(object) if isinstance(object, datetime) else Timedelta.from_other(object)
 

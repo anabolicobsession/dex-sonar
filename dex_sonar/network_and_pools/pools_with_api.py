@@ -249,7 +249,7 @@ class PoolsWithAPI(Pools):
                 geckoterminal_candlesticks_to_ticks(
                     await self.geckoterminal_api.get_ohlcv(
                         network=NETWORK_ID,
-                        pool_address=pool.address,
+                        address=pool.address,
                         timeframe=Timeframe.Minute.ONE,
                         currency=Currency.TOKEN,
                     )

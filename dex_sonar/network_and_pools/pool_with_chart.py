@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from statistics import mean
 from typing import Any, ForwardRef, Generator, Iterable, Self
+from datetime import timezone
 
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
@@ -14,7 +15,7 @@ from matplotlib.dates import DateFormatter
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
-from dex_sonar.config.config import TESTING_MODE, config
+from dex_sonar.config.config import TESTING_MODE, USER_TIMEZONE, config
 from dex_sonar.network_and_pools.network import Pool as NetworkPool
 from dex_sonar.utils.circular_list import CircularList
 from dex_sonar.utils.time import Timedelta, Timestamp
@@ -609,6 +610,7 @@ class Chart:
             max_timeframe: Timeframe = Timeframe(hours=config.getint('Plot', 'max_timeframe')),
             price_in_percents=False,
             datetime_format='%d %H:%M',
+            specific_timezone: timezone = None,
             backend=Backend.DEFAULT,
 
             color_scheme: ColorScheme = ColorScheme(),
@@ -769,7 +771,7 @@ class Chart:
         ax1.tick_params(axis='both', labelsize=size_scheme.tick)
         ax2.tick_params(axis='y', labelsize=size_scheme.tick)
 
-        ax1.xaxis.set_major_formatter(DateFormatter(datetime_format))
+        ax1.xaxis.set_major_formatter(DateFormatter(datetime_format, tz=specific_timezone))
         if price_in_percents: ax1.yaxis.set_major_formatter(lambda x, _: f'{x:.0f}%')
         ax2.yaxis.set_major_formatter(lambda x, _: f'${x:.0f}')
 

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from enum import Enum
 from typing import Iterable
 
@@ -7,7 +6,7 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from dex_sonar.api.api import API, EmptyData, JSON
 from dex_sonar.api.request_limits import RequestLimits, StrictRateLimiter
-from dex_sonar.utils.time import Timedelta
+from dex_sonar.utils.time import Timedelta, Timestamp
 
 
 NetworkId = str
@@ -153,22 +152,22 @@ class GeckoTerminalAPI(API):
     async def get_ohlcv(
             self,
             network: NetworkId,
-            pool_address: Address,
+            address: Address,
             timeframe: Timeframe.Day | Timeframe.Hour | Timeframe.Minute = Timeframe.Day.ONE,
             currency: Currency = Currency.USD,
-            before_timestamp: datetime | None = None,
+            before_timestamp: Timestamp | None = None,
     ) -> list[Candlestick]:
 
         json = await self._get_json(
-            'networks', network, 'pools', pool_address, 'ohlcv', timeframe.__class__.__name__.lower(),
+            'networks', network, 'pools', address, 'ohlcv', timeframe.__class__.__name__.lower(),
             params={
                 'aggregate': timeframe.value,
                 'currency': currency.value,
                 'before_timestamp':
                     int(
-                        before_timestamp.astimezone(timezone.utc).timestamp()
+                        before_timestamp.timestamp()
                         if before_timestamp
-                        else datetime.now(timezone.utc).timestamp()
+                        else Timestamp.now_in_seconds()
                     ),
                 'limit': 1000,
             }

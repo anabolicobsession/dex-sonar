@@ -1,5 +1,5 @@
 import logging
-from datetime import timezone
+from datetime import timedelta, timezone
 
 from dex_sonar.config.configparser import Config
 
@@ -19,6 +19,7 @@ if TESTING_MODE:
 
 NETWORK_ID = 'ton'
 TIMEZONE = timezone.utc
+USER_TIMEZONE = timezone(timedelta(hours=config.getint('Time', 'utc_offset')))
 
 LOGGING_LEVEL = logging.INFO if not config.getboolean('Logs', 'debug_mode') else logging.DEBUG
 LOGGING_FORMAT = (
