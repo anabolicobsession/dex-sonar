@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Callable, Iterable, Iterator, TypeVar
+from typing import Callable, Generic, Iterable, Iterator, TypeVar
 
 from dex_sonar.network_and_pools.network import DEX, Token
 from dex_sonar.network_and_pools.pool_with_chart import IncompleteTick, Pool
@@ -15,7 +15,7 @@ def floor_timestamp_to_minutes(timestamp: Timestamp) -> Timestamp:
 
 T = TypeVar('T')
 
-class SetWithGet(set):
+class SetWithGet(Generic[T], set[T]):
     def get(self, item: T, default=None) -> T | None:
         for x in self:
             if x == item: return x
@@ -24,10 +24,6 @@ class SetWithGet(set):
 
 Filter = Callable[[Pool], bool]
 FilterKey = Callable[[Pool], float]
-
-PoolsType = SetWithGet[Pool]
-Tokens = SetWithGet[Token]
-DEXes = SetWithGet[DEX]
 
 
 class Pools:
@@ -90,8 +86,6 @@ class Pools:
 
         for pool in pools if isinstance(pools, Iterable) else [pools]:
 
-            previous_price_native = self.pools.get(pool).price_native if pool in self.pools else None
-
             if self.pool_filter and not self.pool_filter(pool):
                 continue
 
@@ -107,25 +101,24 @@ class Pools:
                 if existing_pool:
                     if self.repeated_pool_filter_key(pool) > self.repeated_pool_filter_key(existing_pool):
                         self.pools.remove(existing_pool)
-                        self.dexes = DEXes([p.dex for p in self.pools])
+                        self.dexes = SetWithGet([p.dex for p in self.pools])
                     else:
                         continue
+
+            pool.chart.update(
+                IncompleteTick(
+                    timestamp=floor_timestamp_to_minutes(timestamp_of_update),
+                    price=pool.price_native,
+                )
+            )
 
             self._ensure_consistent_token_and_dex_references(pool)
             self._update(pool)
 
-            if pool.price_native != previous_price_native or pool.chart.is_empty():
-                pool.chart.update(
-                    IncompleteTick(
-                        timestamp=floor_timestamp_to_minutes(timestamp_of_update),
-                        price=pool.price_native,
-                    )
-                )
-
     def apply_filter(self):
         if self.pools and self.pool_filter:
             self.pools = SetWithGet(filter(self.pool_filter, self.pools))
-            self.tokens = Tokens(Tokens(map(lambda p: p.base_token, self.pools)) | Tokens(map(lambda p: p.quote_token, self.pools)))
+            self.tokens = SetWithGet(SetWithGet(map(lambda p: p.base_token, self.pools)) | SetWithGet(map(lambda p: p.quote_token, self.pools)))
             self.dexes = SetWithGet(map(lambda p: p.dex, self.pools))
 
     def match_pool(self, token: Token, pool_filter_key: FilterKey) -> Pool | None:

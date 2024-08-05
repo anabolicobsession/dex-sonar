@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
+from math import floor
 from statistics import mean
 from typing import Any, ForwardRef, Generator, Iterable, Self
 from datetime import timezone
@@ -503,30 +504,36 @@ class Chart:
         return len(self.ticks)
 
     def __repr__(self):
-        properties = [f'ticks: {len(self.ticks)}']
+        properties = [f'ticks: {len(self.ticks):4}']
 
         if self.ticks:
-            properties.append(f'timeframe: {self.ticks[0].timestamp.strftime("%m:%d %H:%M")} - {self.ticks[-1].timestamp.strftime("%m:%d %H:%M")}')
+            properties.append(f'timeframe: {self.ticks[0].timestamp.strftime("%m.%d %H:%M")} - {self.ticks[-1].timestamp.strftime("%m:%d %H:%M")}')
+            complete_ticks = len([x for x in self.ticks if isinstance(x, CompleteTick)])
+            percent = f'{complete_ticks / len(self.ticks):.0%}'
+            properties.append(f'complete ticks: {percent:3}')
             properties.append(f'last tick: {repr(self.ticks[-1])}')
-            complete_ticks = sum(map(lambda x: 1 if type(x) is CompleteTick else 0, self.ticks))
-            properties.append(f'complete ticks: {complete_ticks / len(self.ticks):.0%}')
 
         return type(self).__name__ + '(' + ', '.join(properties)  + ')'
 
     def is_empty(self):
         return len(self.ticks) == 0
 
+    def get_ticks(self):
+        return self.ticks
+
     def update(self, new_ticks: Tick | list[Tick]):
 
         if isinstance(new_ticks, Tick):
-
-            if isinstance(new_ticks, IncompleteTick) and next(
-                (True for (i, x) in enumerate(self.ticks) if isinstance(x, CompleteTick) and x.timestamp == new_ticks.timestamp),
-                False
-            ):
-                return
-
             new_ticks = [new_ticks]
+
+        if isinstance(new_ticks[0], IncompleteTick) and next(
+            (True for (i, x) in enumerate(self.ticks) if isinstance(x, CompleteTick) and x.timestamp == new_ticks[0].timestamp),
+            False
+        ):
+            return
+
+        if isinstance(new_ticks[0], IncompleteTick) and self.ticks and self.ticks[-1].price == new_ticks[0].price:
+            return
 
         if new_ticks:
 
@@ -815,3 +822,8 @@ class Pool(NetworkPool):
 
     def __hash__(self):
         return super().__hash__()
+
+    def update(self, other: Self):
+        super().update(other)
+        if isinstance(other, Pool):
+            self.chart.update(other.chart.get_ticks())

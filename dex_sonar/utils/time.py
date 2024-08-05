@@ -48,7 +48,7 @@ class Timedelta(timedelta):
     )
 
     YEAR = TimeUnit(
-        MONTH.in_seconds * 365,
+        DAY.in_seconds * 365,
         'year',
     )
 
@@ -82,6 +82,8 @@ class Timedelta(timedelta):
 
             if seconds < next_time_unit.in_seconds:
                 return time_unit.to_string(seconds)
+
+        return self.TIME_UNITS[-1].to_string(seconds)
 
     def __add__(self, other: timedelta) -> Self:
         return self.from_other(super().__add__(other))

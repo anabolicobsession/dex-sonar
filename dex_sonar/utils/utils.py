@@ -56,7 +56,16 @@ def format_number(
 
     if symbol: s = symbol + s
     if sign: s = sign + s
-    if k_mode: s += K * 'K'; left -= K
+
+    if k_mode and K:
+        s += {
+            1: 'K',
+            2: 'M',
+            3: 'B',
+            4: 'Q',
+        }[K]
+        left -= 1
+
     if percent: s += '%'
 
     return ' ' * max(left, 0) + s + ' ' * max(right, 0)

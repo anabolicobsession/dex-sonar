@@ -163,10 +163,10 @@ class PoolsWithAPI(Pools):
 
         await self.coroutine_callback()
 
-        self._log_pools()
-
         if self.do_intermediate_updates:
             await self._run_intermediate_updates()
+
+        self._log_pools()
 
         if cooldown := self._time_left():
             if cooldown >= Timedelta(seconds=1): logger.info(f'Waiting until update ends {cooldown.total_seconds():.0f}s')
@@ -206,7 +206,8 @@ class PoolsWithAPI(Pools):
             lines = []
 
             for p in self:
-                lines.append(f'{p.get_shortened_name()}: {p.chart}')
+                name = p.get_shortened_name()
+                lines.append(f'{name:10}: {p.chart}')
 
             logger.debug('Pools:\n' + '\n'.join(lines))
 

@@ -10,7 +10,7 @@ from telegram.error import NetworkError
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from dex_sonar.bot import Bot
-from dex_sonar.config.config import NETWORK_ID, TESTING_MODE, USER_TIMEZONE, config
+from dex_sonar.config.config import TESTING_MODE, USER_TIMEZONE, config
 from dex_sonar.logs import setup_logging
 from dex_sonar.network_and_pools.network import Network, Token
 from dex_sonar.network_and_pools.pool_with_chart import Backend, MaxBinsScheme, PlotSizeScheme, Pool, SizeScheme, TrendsView
@@ -175,16 +175,21 @@ class Application:
         add_line('Age:', pool.creation_date.time_elapsed().to_human_readable_format())
         add_line('Price:', format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2))
 
-        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{pool.network.get_id()}/pools/{pool.address}')
-        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{pool.network.from_id(NETWORK_ID).get_id()}/{pool.address}')
-        links = geckoterminal + html.code(' ' * (width - 22)) + dex_screener
+        network = pool.network.get_id()
+        address = pool.address
+        ticker = pool.base_token.ticker
 
-        if (network := pool.network) is Network.TON:
+        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{network}/pools/{address}')
+        dextools = html.link('DEXTools', f'https://www.dextools.io/app/en/{network}/pair-explorer/{address}')
+        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{network}/{address}')
+        links = geckoterminal + html.code(' ' * 3) + dextools + html.code(' ' * 2) + ' ' + dex_screener
+
+        if pool.network is Network.TON:
             def ticker_to_url_ticker(ticker: str):
                 return ticker.replace(' ', '+')
 
-            tonviewer = html.link('Tonviewer', f'https://tonviewer.com/{pool.address}')
-            swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={ticker_to_url_ticker(network.get_name())}&st={pool.base_token.ticker}')
+            tonviewer = html.link('Tonviewer', f'https://tonviewer.com/{address}')
+            swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={ticker_to_url_ticker(pool.network.get_name())}&st={ticker_to_url_ticker(ticker)}')
             links += '\n' + tonviewer + html.code(' ' * (width - 18)) + ' ' + swap_coffee
 
         return '\n'.join([
