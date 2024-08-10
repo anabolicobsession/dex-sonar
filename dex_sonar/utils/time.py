@@ -96,6 +96,14 @@ class Timedelta(timedelta):
     def __rsub__(self, other: timedelta) -> Self:
         return self.from_other(super().__rsub__(other))
 
+    def __neg__(self) -> Self:
+        return self.from_other(super().__neg__())
+
+    def __mul__(self, other: timedelta) -> Self:
+        return self.from_other(super().__mul__(other))
+
+    __rmul__ = __mul__
+
 
 class Timestamp(datetime):
     @classmethod
