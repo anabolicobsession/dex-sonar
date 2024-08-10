@@ -6,7 +6,6 @@ from os import environ
 
 from aiogram import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import NetworkError
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from dex_sonar.bot import Bot
@@ -82,9 +81,6 @@ class Application:
 
         except CancelledError:
             logger.info(f'Stopping the bot')
-
-        except NetworkError as e:
-            logger.error(f'Caught telegram network error: {e}')
 
         finally:
             await self.bot.set_description(None)
@@ -169,11 +165,11 @@ class Application:
             lines.append(f'{a}{" " * chars_left}{b}')
 
         add_line(pool.get_shortened_name() if pool.has_native_quote_token() else pool.get_name(), append)
+        add_line('Price:', format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2))
         add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
         add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
         add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
         add_line('Age:', pool.creation_date.time_elapsed().to_human_readable_format())
-        add_line('Price:', format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2))
 
         network = pool.network.get_id()
         address = pool.address
@@ -182,21 +178,30 @@ class Application:
         geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{network}/pools/{address}')
         dextools = html.link('DEXTools', f'https://www.dextools.io/app/en/{network}/pair-explorer/{address}')
         dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{network}/{address}')
-        links = geckoterminal + html.code(' ' * 3) + dextools + html.code(' ' * 2) + ' ' + dex_screener
+        screener_links = geckoterminal + html.code(' ' * 3) + dextools + html.code(' ' * 2) + ' ' + dex_screener
 
-        if pool.network is Network.TON:
-            def ticker_to_url_ticker(ticker: str):
-                return ticker.replace(' ', '+')
+        match pool.network:
+            case Network.TON:
+                def ticker_to_url_ticker(ticker: str):
+                    return ticker.replace(' ', '+')
 
-            tonviewer = html.link('Tonviewer', f'https://tonviewer.com/{address}')
-            swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={ticker_to_url_ticker(pool.network.get_name())}&st={ticker_to_url_ticker(ticker)}')
-            links += '\n' + tonviewer + html.code(' ' * (width - 18)) + ' ' + swap_coffee
+                tonviewer = html.link('Tonviewer', f'https://tonviewer.com/{address}')
+                swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={ticker_to_url_ticker(pool.network.get_name())}&st={ticker_to_url_ticker(ticker)}')
+                network_links = tonviewer + html.code(' ' * (width - 18)) + ' ' + swap_coffee
+            case _:
+                network_links = None
 
-        return '\n'.join([
-            html.code('\n'.join(lines)),
-            links,
-            html.code(pool.base_token.address),
-        ])
+        return '\n'.join(
+            filter(
+                None,
+                [
+                    html.code('\n'.join(lines)),
+                    network_links,
+                    screener_links,
+                    html.code(pool.base_token.address),
+                ]
+            )
+        )
 
     def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]

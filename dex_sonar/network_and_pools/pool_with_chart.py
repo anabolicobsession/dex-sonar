@@ -560,10 +560,11 @@ class Chart:
                     only_new and
                     self.previous_pattern_end_timestamp and
                     (
-                            match.start_timestamp < self.previous_pattern_end_timestamp and
+                            self.previous_pattern_end_timestamp > match.start_timestamp
+                            and
                             (
                                     not self.repetition_reset_cooldown or
-                                    self.previous_pattern_end_timestamp.time_elapsed() < self.repetition_reset_cooldown
+                                    match.start_timestamp.positive_difference(self.previous_pattern_end_timestamp) < self.repetition_reset_cooldown
                             )
                     )
             ):
