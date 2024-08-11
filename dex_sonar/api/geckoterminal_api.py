@@ -126,10 +126,8 @@ class GeckoTerminalAPI(API):
 
                 json = await self._get_json(
                     'networks', network, pool_source.value + 'pools',
-                    params={
-                        'page': page,
-                        'sort': sort_by.value,
-                    }
+                    page=page,
+                    sort=sort_by.value,
                 )
 
                 if pools_json := json['data']:
@@ -160,17 +158,14 @@ class GeckoTerminalAPI(API):
 
         json = await self._get_json(
             'networks', network, 'pools', address, 'ohlcv', timeframe.__class__.__name__.lower(),
-            params={
-                'aggregate': timeframe.value,
-                'currency': currency.value,
-                'before_timestamp':
-                    int(
-                        before_timestamp.timestamp()
-                        if before_timestamp
-                        else Timestamp.now_in_seconds()
-                    ),
-                'limit': 1000,
-            }
+            aggregate=timeframe.value,
+            currency=currency.value,
+            before_timestamp=int(
+                before_timestamp.timestamp()
+                if before_timestamp
+                else Timestamp.now_in_seconds()
+            ),
+            limit=1000,
         )
 
         ohclv = json['data']['attributes']['ohlcv_list'][::-1]

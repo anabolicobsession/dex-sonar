@@ -9,7 +9,7 @@ from typing import Any, Type
 from aiohttp import ClientSession
 
 from dex_sonar.api.request_limits import RateLimitExceeded, RateLimiter, RequestLimits
-from dex_sonar.utils.time import Cooldown, Timedelta
+from dex_sonar.utils.time import Cooldown, Timedelta, Timestamp
 
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class API(ABC):
     def get_time_until_new_requests_can_be_made(self, number_of_requests=None) -> Timedelta:
         return self.rate_limiter.get_time_until_new_requests_can_be_made(number_of_requests)
 
-    async def _get_json(self, *url_path_segments, **kwargs) -> JSON:
+    async def _get_json(self, *url_path_segments, **params) -> JSON:
 
         if not self.session:
             self.session = ClientSession()
@@ -108,7 +108,10 @@ class API(ABC):
             async with await self.session.get(
                     url=self._form_url(*url_path_segments),
                     headers=API.HEADERS,
-                    **kwargs,
+                    params={
+                        'anti-cache': Timestamp.now_in_seconds(),
+                        **params,
+                    }
             ) as response:
 
                 code, message = response.status, response.reason
