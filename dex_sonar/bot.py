@@ -1,16 +1,19 @@
 from asyncio import run
-from io import BytesIO
 from typing import Awaitable, Iterable
 
 from telegram import Bot as TelegramBot, LinkPreviewOptions, InlineKeyboardMarkup
-from telegram.constants import ParseMode
 from telegram.ext import Defaults, ApplicationBuilder, BaseHandler
+
+from dex_sonar.message import Message
+
+
+Id = int
 
 
 class Bot:
     def __init__(self, token, token_silent):
         defaults = Defaults(
-            parse_mode=ParseMode.HTML,
+            parse_mode=Message.PARSE_MODE,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
 
@@ -53,9 +56,8 @@ class Bot:
 
     async def send_message(
             self,
-            user_id,
-            text,
-            image: BytesIO = None,
+            user: Id,
+            message: Message,
             reply_markup: InlineKeyboardMarkup = None,
             silent: bool = False,
             bot: TelegramBot = None
@@ -65,19 +67,18 @@ class Bot:
         else:
             silent = bot is self.bot_silent
 
-        if not image:
+        if not message.has_image():
             await bot.send_message(
-                user_id,
-                text,
+                chat_id=user,
+                text=message.get_text(),
                 reply_markup=reply_markup,
                 disable_notification=silent,
             )
         else:
-            image.seek(0)
             await bot.send_photo(
-                user_id,
-                image,
-                text,
+                chat_id=user,
+                photo=message.get_image(),
+                caption=message.get_text(),
                 reply_markup=reply_markup,
                 disable_notification=silent,
             )

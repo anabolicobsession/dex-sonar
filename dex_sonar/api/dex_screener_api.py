@@ -57,7 +57,7 @@ class Pool(BaseModel):
     quote_token: Token = Field(..., alias='quoteToken')
     dex_id: str = Field(..., alias='dexId')
 
-    price_native: float = Field(..., alias='priceNative')
+    price_quote: float = Field(..., alias='priceNative')
     price_usd: float = Field(default=None, alias='priceUsd')
     fdv: float = Field(default=None)
     volume: TimePeriodsData = Field(..., alias='volume')

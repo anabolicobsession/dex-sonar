@@ -108,7 +108,7 @@ class Pools:
             pool.chart.update(
                 IncompleteTick(
                     timestamp=floor_timestamp_to_minutes(timestamp_of_update),
-                    price=pool.price_native,
+                    price=pool.price_quote,
                 )
             )
 
@@ -130,3 +130,6 @@ class Pools:
             return matches[0]
 
         return None
+
+    def get_pools_with_same_base_token(self, pool: Pool) -> [Pool]:
+        return [p for p in self if p.base_token == pool.base_token and p != pool]

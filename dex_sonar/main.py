@@ -1,22 +1,19 @@
-import gc
 import logging
 from asyncio import CancelledError
-from io import BytesIO
 from os import environ
 
-from aiogram import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from dex_sonar.bot import Bot
-from dex_sonar.config.config import TESTING_MODE, USER_TIMEZONE, config
+from dex_sonar.config.config import TESTING_MODE, config
 from dex_sonar.logs import setup_logging
-from dex_sonar.network_and_pools.network import Network, Token
-from dex_sonar.network_and_pools.pool_with_chart import Backend, MaxBinsScheme, PlotSizeScheme, Pool, SizeScheme, TrendsView
+from dex_sonar.network_and_pools.network import Token
+from dex_sonar.network_and_pools.pool_with_chart import Pool
 from dex_sonar.network_and_pools.pools_with_api import PoolsWithAPI
 from dex_sonar.users import Users
-from dex_sonar.utils.time import Cooldown, Timedelta
-from dex_sonar.utils.utils import format_number
+from dex_sonar.utils.time import Cooldown, Timedelta, Timestamp
+from dex_sonar.message import Message, Type as MessageType
 
 
 setup_logging()
@@ -31,7 +28,7 @@ class Application:
         )
         self.pools = PoolsWithAPI(
             additional_cooldown=Timedelta.from_other(config.get_timedelta_from_seconds('Updates', 'additional_cooldown')),
-            callback_coroutine=self.send_messages_if_patterns_detected,
+            update_callback=self.update_callback,
 
             do_intermediate_updates=config.getboolean('Updates', 'do_intermediate_updates'),
             intermediate_update_duration=(
@@ -57,6 +54,7 @@ class Application:
             ),
         )
         self.users: Users = Users()
+        self.pool_last_arbitrage: dict[Pool, (Timestamp, float)] = {}
 
         self.bot.add_handlers([
             CallbackQueryHandler(self.serve_mute_button),
@@ -87,48 +85,25 @@ class Application:
             await self.pools.close_api_sessions()
             self.users.close_connection()
 
+    async def update_callback(self):
+        await self.send_messages_if_patterns_detected()
+        await self.send_messages_if_arbitrage_possible()
+
     async def send_messages_if_patterns_detected(self):
         tuples = []
 
         for pool in self.pools:
             if match := pool.chart.get_pattern(only_new=True):
-                with (
-                    pool.chart.create_plot(
-                        trends_view=TrendsView.GLOBAL,
-                        price_in_percents=True,
-                        backend=Backend.AGG,
-
-                        plot_size_scheme=PlotSizeScheme(
-                            width=8,
-                            ratio=0.5,
+                if pool.chart.can_be_plotted():
+                    tuples.append((
+                        pool,
+                        match,
+                        Message(
+                            type=MessageType.PATTERN,
+                            pool=pool,
+                            attention_text=f'{match.pattern.get_name()} {match.magnitude:.0%}',
                         ),
-                        datetime_format='%H:%M',
-                        specific_timezone=USER_TIMEZONE,
-
-                        size_scheme=SizeScheme(
-                            tick=15,
-                        ),
-                        max_bins_scheme=MaxBinsScheme(
-                            x=5,
-                            y=5,
-                        )
-                ) as (plt, fig, _, _)):
-
-                    plot_buffer = BytesIO()
-                    fig.savefig(
-                        plot_buffer,
-                        format='png',
-                        dpi=150,
-                        bbox_inches='tight',
-                        pad_inches=0.3,
-                    )
-                    tuples.append((pool, match, plot_buffer))
-
-                    plt.close(fig)
-                    plt.cla()
-                    plt.clf()
-                    plt.close('all')
-                    gc.collect()
+                    ))
 
         if tuples:
             tuples.sort(key=lambda x: x[1].magnitude, reverse=True)
@@ -138,70 +113,61 @@ class Application:
             return
 
         for user_id in self.users.get_user_ids():
-
-            for pool, match, plot_buffer in tuples:
-
+            for pool, match, message in tuples:
                 if not self.users.is_muted(user_id, pool.base_token):
+                    await self.bot.send_message(user_id, message, reply_markup=self.reply_markup_mute, silent=not match.significant)
 
-                    pattern_message = match.pattern.get_name() + f' {match.magnitude:.0%}'
+    async def send_messages_if_arbitrage_possible(self):
+        for pool in self.pools:
 
-                    await self.bot.send_message(
-                        user_id,
-                        self.pool_to_message(pool, pattern_message),
-                        plot_buffer,
-                        reply_markup=self.reply_markup_mute,
-                        silent=not match.significant
-                    )
+            for similar_pool in self.pools.get_pools_with_same_base_token(pool):
 
-                    plot_buffer.close()
-                    gc.collect()
+                similar_pool: Pool
+                price_difference = abs(pool.price_usd / similar_pool.price_usd - 1)
 
-    @staticmethod
-    def pool_to_message(pool: Pool, append: str, width: int = config.getint('Message', 'width')):
-        lines = []
+                if price_difference >= config.get_normalized_percent('Arbitrage', 'price_min_difference'):
 
-        def add_line(a: str, b: str):
-            chars_left = width - len(a) - len(b)
-            lines.append(f'{a}{" " * chars_left}{b}')
+                    if pool.price_usd < similar_pool.price_usd:
+                        pool_to_buy = pool
+                        pool_to_sell = similar_pool
+                    else:
+                        pool_to_buy = similar_pool
+                        pool_to_sell = pool
 
-        add_line(pool.get_shortened_name() if pool.has_native_quote_token() else pool.get_name(), append)
-        add_line('Price:', format_number(pool.price_usd, 4, 9, symbol='$', significant_figures=2))
-        add_line('FDV:', format_number(pool.fdv, 6, symbol='$', k_mode=True))
-        add_line('Volume:', format_number(pool.volume, 6, symbol='$', k_mode=True))
-        add_line('Liquidity:', format_number(pool.liquidity, 6, symbol='$', k_mode=True))
-        add_line('Age:', pool.creation_date.time_elapsed().to_human_readable_format())
+                    is_pool_to_buy = pool_to_buy in self.pool_last_arbitrage
+                    is_pool_to_sell = pool_to_sell in self.pool_last_arbitrage
 
-        network = pool.network.get_id()
-        address = pool.address
-        ticker = pool.base_token.ticker
+                    if is_pool_to_buy or is_pool_to_sell:
 
-        geckoterminal = html.link('GeckoTerminal', f'https://www.geckoterminal.com/{network}/pools/{address}')
-        dextools = html.link('DEXTools', f'https://www.dextools.io/app/en/{network}/pair-explorer/{address}')
-        dex_screener = html.link('DEX Screener', f'https://dexscreener.com/{network}/{address}')
-        screener_links = geckoterminal + html.code(' ' * 3) + dextools + html.code(' ' * 2) + ' ' + dex_screener
+                        if is_pool_to_buy ^ is_pool_to_sell:
+                            arbitrage_pool = pool_to_buy if pool_to_buy in self.pool_last_arbitrage else pool_to_sell
+                        else:
+                            pool_to_buy_was_later = self.pool_last_arbitrage[pool_to_buy][0] >= self.pool_last_arbitrage[pool_to_sell][0]
+                            arbitrage_pool = pool_to_buy if pool_to_buy_was_later else pool_to_sell
 
-        match pool.network:
-            case Network.TON:
-                def ticker_to_url_ticker(ticker: str):
-                    return ticker.replace(' ', '+')
+                        timestamp, previous_price = self.pool_last_arbitrage[arbitrage_pool]
 
-                tonviewer = html.link('Tonviewer', f'https://tonviewer.com/{address}')
-                swap_coffee = html.link('swap.coffee', f'https://swap.coffee/dex?ft={ticker_to_url_ticker(pool.network.get_name())}&st={ticker_to_url_ticker(ticker)}')
-                network_links = tonviewer + html.code(' ' * (width - 18)) + ' ' + swap_coffee
-            case _:
-                network_links = None
+                        if timestamp.time_elapsed() < Timedelta(minutes=30) or arbitrage_pool.price_usd == previous_price:
+                            continue
 
-        return '\n'.join(
-            filter(
-                None,
-                [
-                    html.code('\n'.join(lines)),
-                    network_links,
-                    screener_links,
-                    html.code(pool.base_token.address),
-                ]
-            )
-        )
+                    if pool_to_buy.chart.can_be_plotted():
+
+                        self.pool_last_arbitrage[pool_to_buy] = Timestamp.now(), pool_to_buy.price_usd
+                        message = Message(
+                            type=MessageType.ARBITRAGE,
+                            pool=pool_to_buy,
+                            additional_pool=pool_to_sell,
+                            attention_text=f'Arbitrage {price_difference:.0%}',
+                        )
+                        logger.info(
+                            f'Detected arbitrage pools: '
+                            f'{pool_to_buy.base_ticker} / '
+                            f'{pool_to_buy.quote_ticker} ({pool_to_buy.dex_name}) -> {pool_to_sell.quote_ticker} ({pool_to_sell.dex_name})'
+                        )
+
+                        for user in self.users.get_user_ids():
+                            if not self.users.is_muted(user, pool_to_buy.base_token):
+                                await self.bot.send_message(user, message, reply_markup=self.reply_markup_mute)
 
     def _parse_token(self, token_ticker: str) -> Token | None:
         matches = [t for t in self.pools.get_tokens() if t.ticker.lower() == token_ticker.lower()]
@@ -230,6 +196,7 @@ class Application:
         else:
             token = self._parse_token(query.message.caption.split(' ', 3)[2])
 
+        # callback query need to be answered, even if no notification to the user is needed, some clients may have trouble otherwise
         await query.answer()
 
         if not token:

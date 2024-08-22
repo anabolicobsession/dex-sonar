@@ -14,5 +14,14 @@ class Config(ConfigParser):
     def getfloat(self, section, option, default: float = None, **kwargs) -> float | None:
         return super().getfloat(section, option, **kwargs) if self.get(section, option, **kwargs) else default
 
+    def get_normalized_percent(self, section, option, default: timedelta = None, **kwargs) -> float | None:
+        return super().getfloat(section, option, **kwargs) / 100 if self.get(section, option, **kwargs) else default
+
     def get_timedelta_from_seconds(self, section, option, default: timedelta = None, **kwargs) -> timedelta | None:
         return timedelta(seconds=self.getint(section, option, **kwargs)) if self.get(section, option, **kwargs) else default
+
+    def get_timedelta_from_minutes(self, section, option, default: timedelta = None, **kwargs) -> timedelta | None:
+        return timedelta(minutes=self.getint(section, option, **kwargs)) if self.get(section, option, **kwargs) else default
+
+    def get_timedelta_from_hours(self, section, option, default: timedelta = None, **kwargs) -> timedelta | None:
+        return timedelta(hours=self.getint(section, option, **kwargs)) if self.get(section, option, **kwargs) else default

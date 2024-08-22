@@ -521,6 +521,9 @@ class Chart:
     def get_ticks(self):
         return self.ticks
 
+    def get_timeframe(self) -> Timedelta:
+        return self.ticks[-1].timestamp.positive_difference(self.ticks[0].timestamp)
+
     def update(self, new_ticks: Tick | list[Tick]):
 
         if isinstance(new_ticks, Tick):
@@ -607,6 +610,9 @@ class Chart:
         new_xs = [mean(xs[:n_avg])]
         for x in xs[1:]: new_xs.append(new_xs[-1] * (1 - alpha) + x * alpha)
         return new_xs
+
+    def can_be_plotted(self):
+        return self.get_timeframe() >= Timedelta.from_other(config.get_timedelta_from_minutes('Message', 'chart_min_timeframe'))
 
     @contextmanager
     def create_plot(

@@ -18,22 +18,16 @@ class _NetworkValue:
     id: Id
     name: str
     native_token_address: Address
+    native_token_ticker: str
 
 
 class Network(Enum):
-    TON = _NetworkValue('ton', 'TON', 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c')
-
-    def __repr__(self):
-        return f'{type(self).__name__}({self.value.name})'
-
-    def get_id(self) -> Id:
-        return self.value.id
-
-    def get_name(self):
-        return self.value.name
-
-    def get_native_token_address(self) -> Address:
-        return self.value.native_token_address
+    TON = _NetworkValue(
+        id='ton',
+        name='TON',
+        native_token_address='EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c',
+        native_token_ticker='TON'
+    )
 
     @classmethod
     def from_id(cls, id: Id) -> Self | None:
@@ -41,6 +35,31 @@ class Network(Enum):
             if network.value.id == id:
                 return network
         raise UnknownNetwork(id)
+
+    @property
+    def id(self) -> Id:
+        return self.value.id
+
+    @property
+    def name(self) -> str:
+        return self.value.name
+
+    @property
+    def native_token_address(self) -> Address:
+        return self.value.native_token_address
+
+    @property
+    def native_token_ticker(self) -> Address:
+        return self.value.native_token_ticker
+
+    def __eq__(self, other):
+        return isinstance(other, Network) and self.value.id == other.value.id
+
+    def __hash__(self):
+        return hash(self.value.id)
+
+    def __repr__(self):
+        return f'{type(self).__name__}({self.value.name})'
 
 
 @dataclass
@@ -64,16 +83,17 @@ class Token:
         self.name = other.name
 
     def is_native_currency(self):
-        return self.address == self.network.get_native_token_address()
+        return self.address == self.network.native_token_address
 
 
 @dataclass
 class DEX:
+    network: Network
     id: Id
-    name: str = None
+    name: str
 
     def __eq__(self, other):
-        return isinstance(other, DEX) and self.id == other.id
+        return isinstance(other, DEX) and self.network == other.network and self.id == other.id
 
     def __hash__(self):
         return hash(self.id)
@@ -83,6 +103,17 @@ class DEX:
 
     def update(self, other: Self):
         self.name = other.name
+
+    @classmethod
+    def from_id(cls, network: Network, id: Id) -> Self:
+        return cls(
+            network,
+            id,
+            {
+                'stonfi': 'STON.fi',
+                'dedust': 'DeDust',
+            }[id],
+        )
 
 
 @dataclass
@@ -101,7 +132,7 @@ class Pool:
     quote_token: Token
     dex: DEX
 
-    price_native: float
+    price_quote: float
     price_usd: float
     fdv: float
     volume: float
@@ -124,7 +155,7 @@ class Pool:
         self.quote_token.update(other.quote_token)
         self.dex.update(other.dex)
 
-        self.price_native = other.price_native
+        self.price_quote = other.price_quote
         self.price_usd = other.price_usd
         self.fdv = other.fdv
         self.volume = other.volume
@@ -133,11 +164,33 @@ class Pool:
         self.price_change = other.price_change
         self.creation_date = other.creation_date
 
+    @property
+    def base_ticker(self):
+        return self.base_token.ticker
+
+    @property
+    def quote_ticker(self):
+        return self.quote_token.ticker
+
+    @property
+    def dex_name(self):
+        return self.dex.name
+
     def has_native_quote_token(self):
         return self.quote_token.is_native_currency()
 
-    def get_name(self):
-        return self.base_token.ticker + '/' + self.quote_token.ticker
+    def form_name(
+            self,
+            shortened=False,
+            shortened_if_native=False,
+            dex=False,
+    ):
+        name = self.base_token.ticker
 
-    def get_shortened_name(self):
-        return self.base_token.ticker
+        if not (shortened or shortened_if_native and self.quote_token.is_native_currency()):
+            name += f' / {self.quote_ticker}'
+
+        if dex:
+            name += f' ({self.dex.id})'
+
+        return name

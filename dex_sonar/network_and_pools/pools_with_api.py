@@ -32,24 +32,26 @@ def dex_screener_pool_to_pool(p: DEXScreenerPool) -> Pool | None:
     ]):
         return None
 
+    network = Network.from_id(p.network_id)
+
     return Pool(
-        network=Network.from_id(p.network_id),
+        network=network,
         address=p.address,
         base_token=Token(
-            network=Network.from_id(p.network_id),
+            network=network,
             address=p.base_token.address,
             ticker=p.base_token.ticker,
             name=p.base_token.name,
         ),
         quote_token=Token(
-            network=Network.from_id(p.network_id),
+            network=network,
             address=p.quote_token.address,
             ticker=p.quote_token.ticker,
             name=p.quote_token.name,
         ),
-        dex=DEX(id=p.dex_id),
+        dex=DEX.from_id(network, p.dex_id),
 
-        price_native=p.price_native,
+        price_quote=p.price_quote,
         price_usd=p.price_usd,
         fdv=p.fdv,
         volume=p.volume.h24,
@@ -73,8 +75,7 @@ def dex_screener_pools_to_pools(pools: Sequence[DEXScreenerPool]) -> list[Pool]:
         logger.debug(
             f'Excluded pools because missing some mandatory properties:\n' +
             '\n'.join(
-
-                [f'{p.base_token.ticker} ({Network.from_id(p.network_id).get_name()}/{p.address})' for p in null_pools]
+                [f'{p.base_token.ticker} ({Network.from_id(p.network_id).name}/{p.address})' for p in null_pools]
             )
         )
 
@@ -109,7 +110,7 @@ class PoolsWithAPI(Pools):
     def __init__(
             self,
             additional_cooldown: Timedelta = Timedelta(),
-            callback_coroutine: Callable[[], Awaitable] = lambda: None,
+            update_callback: Callable[[], Awaitable] = lambda: None,
 
             do_intermediate_updates: bool = False,
             intermediate_update_duration: Timedelta | None = None,
@@ -134,7 +135,7 @@ class PoolsWithAPI(Pools):
         self.last_chart_update: dict[Pool, int] = {}
 
         self.additional_cooldown = additional_cooldown
-        self.coroutine_callback = callback_coroutine
+        self.update_callback = update_callback
 
         self.do_intermediate_updates = do_intermediate_updates
         self.intermediate_update_duration = intermediate_update_duration
@@ -161,7 +162,7 @@ class PoolsWithAPI(Pools):
         await self._update_charts_with_historical_data_via_geckoterminal()
         if self.additional_cooldown: self.update_end = Timestamp.now() + self._time_left() + self.additional_cooldown
 
-        await self.coroutine_callback()
+        await self.update_callback()
 
         if self.do_intermediate_updates:
             await self._run_intermediate_updates()
@@ -260,7 +261,7 @@ class PoolsWithAPI(Pools):
                 first = False
 
             await self._update_pools_via_dex_screener()
-            await self.coroutine_callback()
+            await self.update_callback()
 
             self.average_intermediate_update_duration_without_cooldown = exponential_average(
                 current_average=self.average_intermediate_update_duration_without_cooldown,
