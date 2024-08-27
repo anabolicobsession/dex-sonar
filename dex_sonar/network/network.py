@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Self
 
-from dex_sonar.utils.time import Timestamp
+from dex_sonar.auxiliary.time import Timestamp
 
 
 Id = str

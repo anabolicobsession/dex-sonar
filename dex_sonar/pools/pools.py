@@ -1,9 +1,9 @@
 from datetime import timedelta
 from typing import Callable, Generic, Iterable, Iterator, TypeVar
 
-from dex_sonar.network_and_pools.network import DEX, Token
-from dex_sonar.network_and_pools.pool_with_chart import IncompleteTick, Pool
-from dex_sonar.utils.time import Timestamp
+from dex_sonar.auxiliary.time import Timestamp
+from dex_sonar.network.network import DEX, Token
+from dex_sonar.network.pool_with_chart import IncompleteTick, Pool
 
 
 def floor_timestamp_to_minutes(timestamp: Timestamp) -> Timestamp:

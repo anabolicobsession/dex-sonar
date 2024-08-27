@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 
 from dex_sonar.config.config import NOT_TESTING_MODE, config
-from dex_sonar.network_and_pools.network import Token
+from dex_sonar.network.network import Token
 
 
 UserId = int

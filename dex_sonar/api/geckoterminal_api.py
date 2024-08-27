@@ -6,7 +6,7 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from dex_sonar.api.api import API, EmptyData, JSON
 from dex_sonar.api.request_limits import RequestLimits, StrictRateLimiter
-from dex_sonar.utils.time import Timedelta, Timestamp
+from dex_sonar.auxiliary.time import Timedelta, Timestamp
 
 
 NetworkId = str

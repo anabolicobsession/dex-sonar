@@ -1,4 +1,3 @@
-import logging
 from asyncio import sleep
 from copy import deepcopy
 from logging import getLogger
@@ -6,11 +5,11 @@ from typing import Awaitable, Callable, Iterable, Sequence
 
 from dex_sonar.api.dex_screener_api import DEXScreenerAPI, Pool as DEXScreenerPool
 from dex_sonar.api.geckoterminal_api import AllPages, Candlestick as GeckoTerminalCandlestick, Currency, GeckoTerminalAPI, Pool as GeckoTerminalPool, PoolSource, SortBy, Timeframe
+from dex_sonar.auxiliary.time import Cooldown, Timedelta, Timestamp
 from dex_sonar.config.config import NETWORK_ID
-from dex_sonar.network_and_pools.network import Address, DEX, Network, TimePeriodsData, Token
-from dex_sonar.network_and_pools.pool_with_chart import CompleteTick, Pool, TIMESTAMP_UNIT
-from dex_sonar.network_and_pools.pools import Pools
-from dex_sonar.utils.time import Cooldown, Timedelta, Timestamp
+from dex_sonar.network.network import Address, DEX, Network, TimePeriodsData, Token
+from dex_sonar.network.pool_with_chart import CompleteTick, Pool, TIMESTAMP_UNIT
+from dex_sonar.pools.pools import Pools
 
 
 logger = getLogger(__name__)

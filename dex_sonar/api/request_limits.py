@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
 
-from dex_sonar.utils.time import Timedelta, Timestamp
+from dex_sonar.auxiliary.time import Timedelta, Timestamp
 
 
 class InvalidRequestNumber(Exception):

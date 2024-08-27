@@ -6,8 +6,8 @@ from statistics import mean
 import colorama
 from colorama import Fore
 
+from dex_sonar.auxiliary.time import Timestamp
 from dex_sonar.config.config import LOGGING_FORMAT, LOGGING_LEVEL, LOGGING_TIMESTAMP_FORMAT
-from dex_sonar.utils.time import Timestamp
 
 
 Color = str

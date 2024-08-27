@@ -5,15 +5,15 @@ from os import environ
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from dex_sonar.auxiliary.logs import setup_logging
+from dex_sonar.auxiliary.time import Cooldown, Timedelta, Timestamp
 from dex_sonar.bot import Bot
 from dex_sonar.config.config import TESTING_MODE, config
-from dex_sonar.logs import setup_logging
-from dex_sonar.network_and_pools.network import Token
-from dex_sonar.network_and_pools.pool_with_chart import Pool
-from dex_sonar.network_and_pools.pools_with_api import PoolsWithAPI
-from dex_sonar.users import Users
-from dex_sonar.utils.time import Cooldown, Timedelta, Timestamp
 from dex_sonar.message import Message, Type as MessageType
+from dex_sonar.network.network import Token
+from dex_sonar.network.pool_with_chart import Pool
+from dex_sonar.pools.pools_with_api import PoolsWithAPI
+from dex_sonar.users import Users
 
 
 setup_logging()

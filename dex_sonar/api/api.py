@@ -9,7 +9,7 @@ from typing import Any, Type
 from aiohttp import ClientSession
 
 from dex_sonar.api.request_limits import RateLimitExceeded, RateLimiter, RequestLimits
-from dex_sonar.utils.time import Cooldown, Timedelta, Timestamp
+from dex_sonar.auxiliary.time import Cooldown, Timedelta, Timestamp
 
 
 logger = logging.getLogger(__name__)
