@@ -48,7 +48,7 @@ class Application:
             ),
 
             request_error_cooldown=Cooldown(
-                cooldown=Timedelta(seconds=0.9375),  # 60 / 64 (binary powers of minute)
+                cooldown=Timedelta(seconds=0.9375),  # 60 / 64 (binary powers of a minute)
                 multiplier=2,
                 within_time_period=Timedelta(minutes=20),
             ),
@@ -74,18 +74,24 @@ class Application:
 
     async def _run(self):
         try:
-            await self.bot.set_description('Live')
             while True: await self.pools.update_via_api()
 
         except CancelledError:
             logger.info(f'Stopping the bot')
 
         finally:
-            await self.bot.set_description(None)
+            await self.remove_status()
             await self.pools.close_api_sessions()
             self.users.close_connection()
 
-    async def update_callback(self):
+    async def update_status(self):
+        await self.bot.set_description(f'Live. Uptime: {self.pools.get_uptime().to_human_readable_format(minimum=Timedelta.MINUTE)}')
+
+    async def remove_status(self):
+        await self.bot.remove_description()
+
+    async def update_callback(self, main_update=False):
+        if main_update: await self.update_status()
         await self.send_messages_if_patterns_detected()
         await self.send_messages_if_arbitrage_possible()
 

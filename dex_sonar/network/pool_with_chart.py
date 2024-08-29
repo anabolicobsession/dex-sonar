@@ -283,7 +283,7 @@ class PatternUnit:
     @staticmethod
     def _scale(x, pool: NetworkPool = None, base=100_000, slope=2.5):
         if TESTING_MODE:
-            return x / 5
+            return x / 10
         if pool and pool.liquidity and pool.liquidity < base:
             deviation = (base - pool.liquidity) / base
             return x * (1 + slope * deviation)

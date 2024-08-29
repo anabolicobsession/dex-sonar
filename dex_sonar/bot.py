@@ -54,6 +54,10 @@ class Bot:
         await self.bot.set_my_short_description(description)
         await self.bot_silent.set_my_short_description(description)
 
+    async def remove_description(self):
+        await self.bot.set_my_short_description(None)
+        await self.bot_silent.set_my_short_description(None)
+
     async def send_message(
             self,
             user: Id,

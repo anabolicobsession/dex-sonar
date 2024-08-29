@@ -72,7 +72,7 @@ class Timedelta(timedelta):
     def positive_difference(self, other: timedelta) -> Self:
         return max(self - other, Timedelta())
 
-    def to_human_readable_format(self):
+    def to_human_readable_format(self, minimum: TimeUnit = None):
         seconds = self.total_seconds()
 
         for i in range(len(self.TIME_UNITS) - 1):
@@ -80,7 +80,13 @@ class Timedelta(timedelta):
             time_unit = self.TIME_UNITS[i]
             next_time_unit = self.TIME_UNITS[i + 1]
 
-            if seconds < next_time_unit.in_seconds:
+            if (
+                    seconds < next_time_unit.in_seconds and
+                    (
+                        minimum is None or
+                        time_unit.in_seconds >= minimum.in_seconds
+                    )
+            ):
                 return time_unit.to_string(seconds)
 
         return self.TIME_UNITS[-1].to_string(seconds)

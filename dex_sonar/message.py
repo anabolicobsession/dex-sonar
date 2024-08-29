@@ -241,7 +241,7 @@ class Message:
                     case Network.TON:
                         add_link_line(tonviewer_link(pool) + code(' ' * (line_width - 18)) + ' ' + swap_coffee_link(pool))
 
-                add_link_line(geckoterminal_link(pool) + code(' ' * 3) + dextools_link(pool) + code(' ' * 2) + ' ' + dex_screener_link(pool))
+                add_link_line(dextools_link(pool) + code(' ' * 3) + geckoterminal_link(pool) + code(' ' * 2) + ' ' + dex_screener_link(pool))
 
             case Type.ARBITRAGE:
                 add_line(f'{pool.quote_ticker} ({pool.dex_name})', '->', f'{additional_pool.quote_ticker} ({additional_pool.dex_name})', by_middle=True, left_indent_bigger=True)

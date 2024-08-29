@@ -109,7 +109,7 @@ class PoolsWithAPI(Pools):
     def __init__(
             self,
             additional_cooldown: Timedelta = Timedelta(),
-            update_callback: Callable[[], Awaitable] = lambda: None,
+            update_callback: Callable[..., Awaitable] = lambda: None,
 
             do_intermediate_updates: bool = False,
             intermediate_update_duration: Timedelta | None = None,
@@ -127,11 +127,11 @@ class PoolsWithAPI(Pools):
         self.geckoterminal_api = GeckoTerminalAPI(request_error_cooldown=deepcopy(request_error_cooldown))
         self.dex_screener_api = DEXScreenerAPI(request_error_cooldown=deepcopy(request_error_cooldown))
 
-        self.first_update_start: Timestamp = None
-        self.update_start: Timestamp = None
-        self.update_end: Timestamp = None
-        self.update_counter = 0
-        self.last_chart_update: dict[Pool, int] = {}
+        self.first_cycle_start: Timestamp = None
+        self.cycle_start: Timestamp = None
+        self.cycle_end: Timestamp = None
+        self.cycle_counter = 0
+        self.last_chart_cycle: dict[Pool, int] = {}
 
         self.additional_cooldown = additional_cooldown
         self.update_callback = update_callback
@@ -144,9 +144,9 @@ class PoolsWithAPI(Pools):
         self.dex_screener_delay = dex_screener_delay
 
     async def update_via_api(self):
-        if not self.first_update_start: self.first_update_start = Timestamp.now()
-        self.update_start = Timestamp.now()
-        self.update_end = None
+        if not self.first_cycle_start: self.first_cycle_start = Timestamp.now()
+        self.cycle_start = Timestamp.now()
+        self.cycle_end = None
 
         self._log_general_info()
 
@@ -159,9 +159,9 @@ class PoolsWithAPI(Pools):
         self.apply_filter()
 
         await self._update_charts_with_historical_data_via_geckoterminal()
-        if self.additional_cooldown: self.update_end = Timestamp.now() + self._time_left() + self.additional_cooldown
+        if self.additional_cooldown: self.cycle_end = Timestamp.now() + self._time_left() + self.additional_cooldown
 
-        await self.update_callback()
+        await self.update_callback(True)
 
         if self.do_intermediate_updates:
             await self._run_intermediate_updates()
@@ -170,7 +170,7 @@ class PoolsWithAPI(Pools):
             if cooldown >= Timedelta(seconds=1): logger.info(f'Waiting until update ends {cooldown.total_seconds():.0f}s')
             await sleep(cooldown.total_seconds())
 
-        logger.info(f'Total time: {self.update_start.time_elapsed_in_seconds():.0f}s')
+        logger.info(f'Total time: {self.cycle_start.time_elapsed_in_seconds():.0f}s')
         logger.info('')
 
         self._increment_update_counter()
@@ -186,24 +186,27 @@ class PoolsWithAPI(Pools):
             DEXScreenerAPI.REQUEST_LIMITS.time_period
         )
 
+    def get_uptime(self) -> Timedelta:
+        return self.first_cycle_start.time_elapsed() if self.first_cycle_start else Timedelta()
+
     def _log_general_info(self):
         logger.info(
-            f'Starting update #{self.update_counter + 1} '
+            f'Starting cycle #{self.cycle_counter + 1} '
             '(' +
             ', '.join([
                 f'pools: {len(self)}',
-                f'uptime: {self.first_update_start.time_elapsed_in_seconds() / 60:.0f} min',
-                f'average update duration: {round(self.first_update_start.time_elapsed_in_seconds() / self.update_counter) if self.update_counter else 0:.0f}s',
-                f'average intermediate pure update duration: {round(self.average_intermediate_update_duration_without_cooldown.total_seconds()):.0f}s',
+                f'uptime: {self.first_cycle_start.time_elapsed_in_seconds() / 60:.0f} min',
+                f'average cycle duration: {round(self.first_cycle_start.time_elapsed_in_seconds() / self.cycle_counter) if self.cycle_counter else 0:.0f}s',
+                f'average pure update duration: {round(self.average_intermediate_update_duration_without_cooldown.total_seconds()):.0f}s',
             ])
             + ')'
         )
 
     def _increment_update_counter(self):
-        self.update_counter += 1
+        self.cycle_counter += 1
 
     def _does_update_satisfy(self, every_update):
-        return self.update_counter % every_update == 0
+        return self.cycle_counter % every_update == 0
 
     async def _get_new_pools_via_geckoterminal(self) -> list[GeckoTerminalPool]:
         return await self.geckoterminal_api.get_pools(
@@ -225,7 +228,7 @@ class PoolsWithAPI(Pools):
         priority_list = [
             [
                 x,
-                self.last_chart_update.get(x, _THERE_WAS_NO_UPDATE),
+                self.last_chart_cycle.get(x, _THERE_WAS_NO_UPDATE),
                 x.volume * abs(x.price_change.h1),
             ] for x in self
         ]
@@ -244,7 +247,7 @@ class PoolsWithAPI(Pools):
                     )
                 )
             )
-            self.last_chart_update[pool] = self.update_counter
+            self.last_chart_cycle[pool] = self.cycle_counter
 
     async def _run_intermediate_updates(self):
         call_start_timestamp = Timestamp.now()
@@ -256,7 +259,7 @@ class PoolsWithAPI(Pools):
 
             nonlocal first
             if first:
-                logger.info('Running intermediate updates')
+                logger.info('Running updates')
                 first = False
 
             await self._update_pools_via_dex_screener()
@@ -293,10 +296,10 @@ class PoolsWithAPI(Pools):
                 await run_intermediate_updates_without_cooldown()
 
         if updates:
-            logger.info(f'Ran intermediate updates: {updates} in {call_start_timestamp.time_elapsed_in_seconds():.0f}s')
+            logger.info(f'Ran updates: {updates} in {call_start_timestamp.time_elapsed_in_seconds():.0f}s')
 
     def _time_left(self) -> Timedelta:
-        if not self.update_end:
+        if not self.cycle_end:
             return max(
                 self.geckoterminal_api.get_time_until_new_requests_can_be_made(
                     number_of_requests=min(
@@ -311,4 +314,4 @@ class PoolsWithAPI(Pools):
                 ),
             )
         else:
-            return self.update_end.time_left()
+            return self.cycle_end.time_left()
