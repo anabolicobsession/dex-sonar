@@ -46,13 +46,76 @@ SegmentsSlice = list[Segment]
 
 
 class Segments:
-    def __init__(self, ticks_or_segments: Iterable[Tick] | Self):
+    def __init__(self, ticks_or_segments: Iterable[Tick] | Self, reverse_traversal=False):
         self.segments: deque[Segment] | None = None
-        self.initialize(ticks_or_segments)
+
+        self.segments = (
+            deque(
+                Segment(
+                    start_timestamp=a.timestamp,
+                    end_timestamp=b.timestamp,
+                    prices=[a.price, b.price],
+                )
+                for a, b in zip(
+                    ticks_or_segments[:-1],
+                    ticks_or_segments[1:],
+                )
+            )
+            if not isinstance(ticks_or_segments, Segments) else
+            deepcopy(ticks_or_segments.segments)
+        )
+
+        if reverse_traversal:
+            self.segments.reverse()
+
+        i = 0
+        while i + 2 < len(self.segments):
+            s1, s2, s3 = self.segments[i], self.segments[i + 1], self.segments[i + 2]
+            replacement_done = False
+
+            if s1.is_codirectional_with(s2):
+                self._replace_by_concatenation(i, s1, s2)
+                replacement_done = True
+
+            elif s2.is_codirectional_with(s3):
+                self._replace_by_concatenation(i + 1, s2, s3)
+                replacement_done = True
+
+            elif self._can_be_absorbed(s1, s2, s3):
+                self._replace_by_concatenation(i, s1, s2, s3)
+                replacement_done = True
+
+            if replacement_done:
+                i = max(i - 2, 0)
+                continue
+
+            i += 1
+
+        if len(self.segments) == 2:
+            s1, s2 = self.segments[i], self.segments[i + 1]
+
+            if s1.is_codirectional_with(s2):
+                self._replace_by_concatenation(0, s1, s2)
+
+        if reverse_traversal:
+            self.segments.reverse()
+
         self.length = len(self.segments)
 
+    def _replace_by_concatenation(self, i, *trends):
+        for x in trends:
+            self.segments.remove(x)
+        self.segments.insert(i, sum(trends[1:], start=trends[0]))
+
+    @staticmethod
+    def _can_be_absorbed(left, middle, right):
+        return (
+                left.is_codirectional_with(right) and not left.is_codirectional_with(middle) and
+                middle.get_magnitude() <= min(left.get_magnitude(), right.get_magnitude())
+        )
+
     def __len__(self):
-        return len(self.segments)
+        return self.length
 
     def __iter__(self):
         return iter(self.segments)
@@ -69,11 +132,6 @@ class Segments:
             if stop != self.length: stop = stop % self.length
 
             return [self.segments[j] for j in range(start, stop, step)]
-
-    def slice_itself(self, s: slice) -> Self:
-        new = deepcopy(self)
-        new.segments = deque(self[s])
-        return new
 
     def __repr__(self):
         trends = []
@@ -94,80 +152,10 @@ class Segments:
                 '\n)'
         )
 
-    def initialize(self, ticks_or_trends):
-        if not isinstance(ticks_or_trends, Segments):
-            prices = [x.price for x in ticks_or_trends]
-            timestamps = [x.timestamp for x in ticks_or_trends]
-            changes = [
-                (y - x) / x if x else 0 for x, y in zip(
-                    prices[:-1],
-                    prices[1:],
-                )
-            ]
-            self.segments = deque(
-                Segment(x, y, z) for x, y, z in zip(
-                    changes,
-                    timestamps[:-1],
-                    timestamps[1:],
-                )
-            )
-        else:
-            self.segments = deepcopy(ticks_or_trends.segments)
-
-        self.segments.reverse()
-
-        i = 0
-        while i + 2 < len(self.segments):
-            t1, t2, t3 = self.segments[i], self.segments[i + 1], self.segments[i + 2]
-            replacement_done = False
-
-            if t1.is_codirectional_with(t2) and self._are_within_limits(t1, t2):
-                self._replace_by_concatenation(i, t1, t2)
-                replacement_done = True
-
-            elif t2.is_codirectional_with(t3) and self._are_within_limits(t2, t3):
-                self._replace_by_concatenation(i + 1, t2, t3)
-                replacement_done = True
-
-            elif self._can_be_absorbed(t1, t2, t3) and self._are_within_limits(t1, t2, t3):
-                self._replace_by_concatenation(i, t1, t2, t3)
-                replacement_done = True
-
-            if replacement_done:
-                i = max(i - 2, 0)
-                continue
-
-            i += 1
-
-        if len(self.segments) == 2:
-            t1, t2 = self.segments[i], self.segments[i + 1]
-
-            if t1.is_codirectional_with(t2) and self._are_within_limits(t1, t2):
-                self._replace_by_concatenation(0, t1, t2)
-
-        self.segments.reverse()
-
-    @staticmethod
-    def _concatenate(trends):
-        return sum(trends[1:], start=trends[0])
-
-    def _replace_by_concatenation(self, i, *trends):
-        for x in trends:
-            self.segments.remove(x)
-        self.segments.insert(i, self._concatenate(trends))
-
-    def _are_within_limits(self, *trends):
-        x = self._concatenate(trends)
-        if self.max_timeframe and x.get_timeframe() > self.max_timeframe: return False
-        if self.max_magnitude and x.get_magnitude() > self.max_magnitude: return False
-        return True
-
-    @staticmethod
-    def _can_be_absorbed(left, middle, right):
-        return (
-                left.is_codirectional_with(right) and not left.is_codirectional_with(middle) and
-                middle.get_magnitude() <= min(left.get_magnitude(), right.get_magnitude())
-        )
+    def slice_itself(self, s: slice) -> Self:
+        new = deepcopy(self)
+        new.segments = deque(self[s])
+        return new
 
 
 @dataclass
