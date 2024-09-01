@@ -7,7 +7,9 @@ from telegram.constants import ParseMode
 
 from dex_sonar.config.config import USER_TIMEZONE, config
 from dex_sonar.network.network import Network
-from dex_sonar.network.pool_with_chart import Backend, MaxBinsScheme, PlotSizeScheme, Pool, SizeScheme, TrendsView
+from network.pool_with_chart.pool import Pool
+from network.pool_with_chart.chart import Backend, MaxBinsScheme, PlotSizeScheme, SizeScheme
+from network.pool_with_chart.segments import TrendsView
 
 
 Text = str

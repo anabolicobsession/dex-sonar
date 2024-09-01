@@ -1,13 +1,9 @@
-import gc
-from abc import ABC
-from collections import deque
 from contextlib import contextmanager
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timezone
 from enum import Enum
 from statistics import mean
-from typing import Any, ForwardRef, Generator, Generic, Iterable, Self, TypeVar
+from typing import Any, Generic, Iterable, TypeVar
 
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
@@ -16,440 +12,19 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
 from dex_sonar.auxiliary.time import Timedelta, Timestamp
-from dex_sonar.config.config import TESTING_MODE, config
-from dex_sonar.network.network import Pool as NetworkPool
+from dex_sonar.config.config import config
+from .patterns import Pattern, PatternMatch
+from .segments import TrendsView
+from .ticks import CompleteTick, IncompleteTick, Tick
+from ..network import Pool as NetworkPool
 
 
-Timeframe = Timedelta
-Significance = bool
-Magnitude = float
 Pyplot = Any
 Color = str
-
 TIMESTAMP_UNIT = Timedelta(minutes=1)
 
+
 plt.rcParams.update({'mathtext.default': 'regular'})
-
-
-@dataclass
-class _AbstractDataclass(ABC):
-    def __new__(cls, *args, **kwargs):
-        if cls == _AbstractDataclass or cls.__bases__[0] == _AbstractDataclass:
-            raise TypeError('Can\'t instantiate an abstract class')
-        return super().__new__(cls)
-
-
-@dataclass
-class Tick(_AbstractDataclass):
-    timestamp: Timestamp
-    price: float
-
-    def __repr__(self):
-        return f'{type(self).__name__}({self.timestamp.strftime("%m-%d %H:%M:%S")}, {self.price})'
-
-
-@dataclass(repr=False)
-class CompleteTick(Tick):
-    volume: float
-
-
-@dataclass(repr=False)
-class IncompleteTick(Tick):
-    ...
-
-
-@dataclass
-class Trend:
-    change: float
-    start_timestamp: Timestamp
-    end_timestamp: Timestamp
-
-    def is_upward(self):
-        return self.change > 0
-
-    def get_timeframe(self) -> Timedelta:
-        return self.end_timestamp - self.start_timestamp
-
-    def get_magnitude(self):
-        return abs(self.change)
-
-    def get_start_index(self, ticks: Iterable[Tick]):
-        return next(i for i, x in enumerate(ticks) if x.timestamp == self.start_timestamp)
-
-    def get_end_index(self, ticks: Iterable[Tick]):
-        return next(i for i, x in enumerate(ticks) if x.timestamp == self.end_timestamp)
-
-    def is_codirectional_with(self, other):
-        return self.change * other.change >= 0
-
-    def __add__(self, other):
-        times = (self.start_timestamp, other.end_timestamp) if self.start_timestamp < other.end_timestamp else (other.start_timestamp, self.end_timestamp)
-        change = (1 + self.change) * (1 + other.change) - 1
-        return Trend(change, *times)
-
-
-TrendsSlice = list[Trend, ...]
-
-class Trends:
-    def __init__(
-            self,
-            ticks_or_trends: Iterable[Tick] | Self,
-            max_timeframe: Timedelta = None,
-            max_magnitude: float = None,
-    ):
-        self.trends: deque[Trend] | None = None
-        self.max_timeframe = max_timeframe
-        self.max_magnitude = max_magnitude
-        self.initialize(ticks_or_trends)
-        self.length = len(self.trends)
-
-    def __len__(self):
-        return len(self.trends)
-
-    def __iter__(self):
-        return iter(self.trends)
-
-    def __getitem__(self, i: int | slice) -> Trend | TrendsSlice:
-        if isinstance(i, int):
-            return self.trends[i]
-        else:
-            start = i.start if i.start is not None else 0
-            stop  = i.stop  if i.stop  is not None else self.length
-            step  = i.step  if i.step  is not None else 1
-
-            start = start % self.length
-            if stop != self.length: stop = stop % self.length
-
-            return [self.trends[j] for j in range(start, stop, step)]
-
-    def slice_itself(self, s: slice) -> Self:
-        new = deepcopy(self)
-        new.trends = deque(self[s])
-        return new
-
-    def __repr__(self):
-        trends = []
-
-        for x in self.trends:
-            trends.append(
-                f'{x.start_timestamp.strftime("%m-%d %H:%M")}: {x.change:7.1%}'
-            )
-
-        return (
-                type(self).__name__ +
-                '(\n    ' +
-                (
-                    '\n    '.join(trends)
-                    if len(self.trends) <= 50
-                    else f'total: {len(self.trends)}'
-                ) +
-                '\n)'
-        )
-
-    def initialize(self, ticks_or_trends):
-        if not isinstance(ticks_or_trends, Trends):
-            prices = [x.price for x in ticks_or_trends]
-            timestamps = [x.timestamp for x in ticks_or_trends]
-            changes = [
-                (y - x) / x if x else 0 for x, y in zip(
-                    prices[:-1],
-                    prices[1:],
-                )
-            ]
-            self.trends = deque(
-                Trend(x, y, z) for x, y, z in zip(
-                    changes,
-                    timestamps[:-1],
-                    timestamps[1:],
-                )
-            )
-        else:
-            self.trends = deepcopy(ticks_or_trends.trends)
-
-        self.trends.reverse()
-
-        i = 0
-        while i + 2 < len(self.trends):
-            t1, t2, t3 = self.trends[i], self.trends[i + 1], self.trends[i + 2]
-            replacement_done = False
-
-            if t1.is_codirectional_with(t2) and self._are_within_limits(t1, t2):
-                self._replace_by_concatenation(i, t1, t2)
-                replacement_done = True
-
-            elif t2.is_codirectional_with(t3) and self._are_within_limits(t2, t3):
-                self._replace_by_concatenation(i + 1, t2, t3)
-                replacement_done = True
-
-            elif self._can_be_absorbed(t1, t2, t3) and self._are_within_limits(t1, t2, t3):
-                self._replace_by_concatenation(i, t1, t2, t3)
-                replacement_done = True
-
-            if replacement_done:
-                i = max(i - 2, 0)
-                continue
-
-            i += 1
-
-        if len(self.trends) == 2:
-            t1, t2 = self.trends[i], self.trends[i + 1]
-
-            if t1.is_codirectional_with(t2) and self._are_within_limits(t1, t2):
-                self._replace_by_concatenation(0, t1, t2)
-
-        self.trends.reverse()
-
-    @staticmethod
-    def _concatenate(trends):
-        return sum(trends[1:], start=trends[0])
-
-    def _replace_by_concatenation(self, i, *trends):
-        for x in trends:
-            self.trends.remove(x)
-        self.trends.insert(i, self._concatenate(trends))
-
-    def _are_within_limits(self, *trends):
-        x = self._concatenate(trends)
-        if self.max_timeframe and x.get_timeframe() > self.max_timeframe: return False
-        if self.max_magnitude and x.get_magnitude() > self.max_magnitude: return False
-        return True
-
-    @staticmethod
-    def _can_be_absorbed(left, middle, right):
-        return (
-                left.is_codirectional_with(right) and not left.is_codirectional_with(middle) and
-                middle.get_magnitude() <= min(left.get_magnitude(), right.get_magnitude())
-        )
-
-
-@dataclass
-class _TrendsViewValue:
-    max_timeframe: Timeframe = None
-    max_magnitude: float = None
-
-    def __post_init__(self):
-        if self.max_magnitude: self.max_magnitude /= 100
-
-
-class TrendsView(Enum):
-
-    TIMEFRAME_10M = _TrendsViewValue(
-        max_timeframe=Timeframe(minutes=10),
-    )
-
-    TIMEFRAME_15M = _TrendsViewValue(
-        max_timeframe=Timeframe(minutes=15),
-    )
-
-    TIMEFRAME_30M = _TrendsViewValue(
-        max_timeframe=Timeframe(minutes=30),
-    )
-
-    GLOBAL = _TrendsViewValue()
-
-    def generate_trends(self, ticks_or_trends: Iterable[Tick] | Trends) -> Trends:
-        return Trends(ticks_or_trends, max_timeframe=self.value.max_timeframe, max_magnitude=self.value.max_magnitude)
-
-    @staticmethod
-    def generate_all(ticks_or_trends: Iterable[Tick] | Trends) -> list[Trends]:
-        accumulator = []
-
-        for trends_view in TrendsView:
-            accumulator.append(
-                trends_view.generate_trends(
-                    ticks_or_trends if not accumulator else accumulator[-1]
-                )
-            )
-
-        return accumulator
-
-
-@dataclass
-class PatternUnit:
-    min_change: float
-    min_timeframe: Timeframe = None
-    max_timeframe: Timeframe = None
-
-    def __post_init__(self):
-        self.min_change /= 100
-
-    def get_magnitude(self):
-        return abs(self.min_change)
-
-    @staticmethod
-    def _have_same_sign(a, b):
-        return a * b >= 0
-
-    @staticmethod
-    def _scale(x, pool: NetworkPool = None, base=100_000, slope=2.5):
-        if TESTING_MODE:
-            return x / 10
-        if pool and pool.liquidity and pool.liquidity < base:
-            deviation = (base - pool.liquidity) / base
-            return x * (1 + slope * deviation)
-        return x
-
-    def match(self, trend: Trend, pool: NetworkPool):
-        return (
-                self._have_same_sign(self.min_change, trend.change) and trend.get_magnitude() >= self._scale(self.get_magnitude(), pool) and
-                not (self.min_timeframe and trend.get_timeframe() < self.min_timeframe) and
-                not (self.max_timeframe and trend.get_timeframe() > self.max_timeframe)
-        )
-
-
-@dataclass
-class _PatternMatchBody:
-    start_timestamp: Timestamp
-    end_timestamp: Timestamp
-    significant: Significance
-    magnitude: Magnitude
-
-
-class _PatternBody:
-    def __init__(self, *units: PatternUnit, significance_threshold: float = None):
-        self.units = units
-        self.length = len(units)
-        self.significance_threshold = significance_threshold / 100 if significance_threshold else None
-        self.magnitude_index = max(enumerate(units), key=lambda x: x[1].get_magnitude())[0]
-
-    def _match(self, trends_slice, pool):
-        return all([
-            x.match(y, pool) for x, y in zip(
-                self.units,
-                trends_slice,
-            )
-        ])
-
-    def _extract_info(self, trends: TrendsSlice) -> tuple[Significance, Magnitude]:
-        magnitude = trends[self.magnitude_index].get_magnitude()
-        pattern_magnitude = self.units[self.magnitude_index].get_magnitude()
-        ratio = magnitude / pattern_magnitude
-        return (
-            trends[0].start_timestamp,
-            trends[-1].end_timestamp,
-            True if not self.significance_threshold else ratio >= self.significance_threshold,
-            magnitude,
-        )
-
-    def match(
-            self,
-            trends: Trends,
-            pool: NetworkPool,
-            delay_tolerance: Timeframe = None,
-    ) -> _PatternMatchBody | None:
-
-        if (
-                len(trends) >= self.length
-        ):
-            trends_slice = trends[-self.length:]
-
-            if self._match(trends_slice, pool):
-                return _PatternMatchBody(*self._extract_info(trends_slice))
-
-        if (
-                delay_tolerance and
-                len(trends) - 1 >= self.length and
-                trends[-1].get_timeframe() <= delay_tolerance
-        ):
-            trends_slice = trends[-self.length - 1:-1]
-
-            if self._match(trends_slice, pool):
-                return _PatternMatchBody(*self._extract_info(trends_slice))
-
-        return None
-
-
-_Pattern = ForwardRef('Pattern')
-
-class PatternMatch(_PatternMatchBody):
-    def __init__(self, pattern: _Pattern, body: _PatternMatchBody):
-        self.pattern = pattern
-        super().__init__(body.start_timestamp, body.end_timestamp, body.significant, body.magnitude)
-
-
-class Pattern(Enum):
-
-    DUMP = _PatternBody(
-        PatternUnit(
-            -8,
-            max_timeframe=Timeframe(minutes=10)
-        ),
-    )
-
-    DOWNTREND = _PatternBody(
-        PatternUnit(
-            -30,
-            max_timeframe=Timeframe(hours=2)
-        ),
-        significance_threshold=100000,
-    )
-
-    REVERSAL = _PatternBody(
-        PatternUnit(
-            -30,
-            min_timeframe=Timeframe(hours=2)
-        ),
-        PatternUnit(
-            10,
-            min_timeframe=Timeframe(minutes=30)
-        ),
-        significance_threshold=100000,
-    )
-
-
-    PUMP = _PatternBody(
-        PatternUnit(
-            50,
-            max_timeframe=Timeframe(hours=1)
-        ),
-        significance_threshold=100000,
-    )
-
-    UPTREND = _PatternBody(
-        PatternUnit(
-            20,
-            min_timeframe=Timeframe(hours=2)
-        ),
-        significance_threshold=100000,
-    )
-
-    SLOW_UPTREND = _PatternBody(
-        PatternUnit(
-            10,
-            min_timeframe=Timeframe(hours=12)
-        ),
-        significance_threshold=100000,
-    )
-
-
-    def get_name(self):
-        return self.name.replace('_', ' ').title()
-
-    def get_abbreviation(self):
-        if self is Pattern.DOWNTREND: return 'DW'
-        if self is Pattern.SLOW_UPTREND: return 'SU'
-        return self.name[0]
-
-    def match(self, ticks: Iterable[Tick], pool: NetworkPool = None) -> Generator[PatternMatch, None, None]:
-
-        trends_views = TrendsView.generate_all(ticks)
-
-        for trends in trends_views:
-            if match_body := self.value.match(trends, pool, delay_tolerance=Timeframe(minutes=config.getint('Patterns', 'delay_tolerance'))):
-                yield PatternMatch(self, match_body)
-
-    @staticmethod
-    def match_any(ticks: Iterable[Tick], pool: NetworkPool = None, reverse_trends_views_traversal=False) -> Generator[PatternMatch, None, None]:
-
-        trends_views = TrendsView.generate_all(ticks)
-        if reverse_trends_views_traversal: trends_views = list(reversed(trends_views))
-
-        for pattern in Pattern:
-
-            for trends in trends_views:
-
-                if match_body := pattern.value.match(trends, pool, delay_tolerance=Timeframe(minutes=config.getint('Patterns', 'delay_tolerance'))):
-                    yield PatternMatch(pattern, match_body)
 
 
 class NotEnoughItemsToPop(Exception):
@@ -567,7 +142,7 @@ class Chart:
         self.ticks: CircularList[Tick] = CircularList(capacity=config.getint('Chart', 'max_ticks'))
         self.pool: NetworkPool = pool
         self.previous_pattern_end_timestamp: Timestamp = None
-        self.repetition_reset_cooldown = Timeframe(hours=config.getint('Patterns', 'repetition_reset_cooldown'))
+        self.repetition_reset_cooldown = Timedelta(hours=config.getint('Patterns', 'repetition_reset_cooldown'))
         self.fig: Figure | None = None
 
     def __len__(self):
@@ -691,7 +266,7 @@ class Chart:
             mark_pattern_every_tick: int | None = None,
 
             plot_size_scheme: PlotSizeScheme = PlotSizeScheme(),
-            max_timeframe: Timeframe = Timeframe(hours=config.getint('Plot', 'max_timeframe')),
+            max_timeframe: Timedelta = Timedelta(hours=config.getint('Plot', 'max_timeframe')),
             price_in_percents=False,
             datetime_format='%d %H:%M',
             specific_timezone: timezone = None,
@@ -793,7 +368,7 @@ class Chart:
                 if patterns and i - patterns[-1][0] < min_distance_between_marks: continue
                 match = next(Pattern.match_any(ticks[:i + 1], self.pool, reverse_trends_views_traversal=True), None)
                 if match: patterns.append((i, match.pattern))
-                    
+
 
             for pattern, string in pattern_string_mapping.items():
 
@@ -880,27 +455,3 @@ class Chart:
 
         if self.fig:
             plt.close(self.fig)
-
-        plt.cla()
-        plt.clf()
-        plt.close('all')
-        gc.collect()
-
-
-@dataclass
-class Pool(NetworkPool):
-    chart: Chart = None
-
-    def __post_init__(self):
-        self.chart = Chart(pool=self)
-
-    def __eq__(self, other):
-        return isinstance(other, NetworkPool) and super().__eq__(other)
-
-    def __hash__(self):
-        return super().__hash__()
-
-    def update(self, other: Self):
-        super().update(other)
-        if isinstance(other, Pool):
-            self.chart.update(other.chart.get_ticks())

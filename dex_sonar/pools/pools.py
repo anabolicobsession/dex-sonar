@@ -3,7 +3,7 @@ from typing import Callable, Generic, Iterable, Iterator, TypeVar
 
 from dex_sonar.auxiliary.time import Timestamp
 from dex_sonar.network.network import DEX, Token
-from dex_sonar.network.pool_with_chart import IncompleteTick, Pool
+from network.pool_with_chart.pool_with_chart import IncompleteTick, Pool
 
 
 def floor_timestamp_to_minutes(timestamp: Timestamp) -> Timestamp:
