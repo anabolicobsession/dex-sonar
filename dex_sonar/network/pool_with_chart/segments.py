@@ -39,15 +39,16 @@ class Segment:
         return next(i for i, x in enumerate(ticks) if x.timestamp == self.end_timestamp)
 
     def __add__(self, other):
-        return Segment(self.start_timestamp, other.end_timestamp, self.prices + other.prices)
+        return (
+            Segment(self.start_timestamp, other.end_timestamp, self.prices + other.prices)
+            if self.start_timestamp < other.start_timestamp else
+            Segment(other.start_timestamp, self.end_timestamp, other.prices + self.prices)
+        )
 
 
-SegmentsSlice = list[Segment]
-
-
-class Segments:
+class Segments(list[Segment]):
     def __init__(self, ticks_or_segments: Iterable[Tick] | Self, reverse_traversal=False):
-        self.segments: deque[Segment] | None = None
+        super().__init__()
 
         self.segments = (
             deque(
@@ -93,45 +94,24 @@ class Segments:
 
         if len(self.segments) == 2:
             s1, s2 = self.segments[i], self.segments[i + 1]
-
-            if s1.is_codirectional_with(s2):
-                self._replace_by_concatenation(0, s1, s2)
+            if s1.is_codirectional_with(s2): self._replace_by_concatenation(0, s1, s2)
 
         if reverse_traversal:
             self.segments.reverse()
 
-        self.length = len(self.segments)
+        self.extend(self.segments)
+        self.segments.clear()
 
-    def _replace_by_concatenation(self, i, *trends):
-        for x in trends:
-            self.segments.remove(x)
-        self.segments.insert(i, sum(trends[1:], start=trends[0]))
+    def _replace_by_concatenation(self, i, *segments):
+        for x in segments: self.segments.remove(x)
+        self.segments.insert(i, sum(segments[1:], start=segments[0]))
 
     @staticmethod
-    def _can_be_absorbed(left, middle, right):
+    def _can_be_absorbed(left: Segment, middle: Segment, right: Segment):
         return (
                 left.is_codirectional_with(right) and not left.is_codirectional_with(middle) and
                 middle.get_magnitude() <= min(left.get_magnitude(), right.get_magnitude())
         )
-
-    def __len__(self):
-        return self.length
-
-    def __iter__(self):
-        return iter(self.segments)
-
-    def __getitem__(self, i: int | slice) -> Segment | SegmentsSlice:
-        if isinstance(i, int):
-            return self.segments[i]
-        else:
-            start = i.start if i.start is not None else 0
-            stop  = i.stop  if i.stop  is not None else self.length
-            step  = i.step  if i.step  is not None else 1
-
-            start = start % self.length
-            if stop != self.length: stop = stop % self.length
-
-            return [self.segments[j] for j in range(start, stop, step)]
 
     def __repr__(self):
         trends = []
@@ -151,11 +131,6 @@ class Segments:
                 ) +
                 '\n)'
         )
-
-    def slice_itself(self, s: slice) -> Self:
-        new = deepcopy(self)
-        new.segments = deque(self[s])
-        return new
 
 
 @dataclass
