@@ -1,5 +1,4 @@
 from collections import deque
-from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Self
@@ -9,6 +8,7 @@ from .ticks import Price, Tick
 
 
 Timeframe = Timedelta
+Ticks = Iterable[Tick]
 
 
 @dataclass
@@ -18,24 +18,24 @@ class Segment:
     prices: list[Price]
 
     def __post_init__(self):
-        self.normalized_change = self.prices[-1] / self.prices[0] - 1
+        self.change = self.prices[-1] / self.prices[0] - 1
 
     def is_upward(self):
-        return self.normalized_change > 0
+        return self.change > 0
 
     def is_codirectional_with(self, other: Self):
-        return self.normalized_change * other.normalized_change >= 0
+        return self.change * other.change >= 0
 
     def get_timeframe(self) -> Timedelta:
         return self.end_timestamp - self.start_timestamp
 
     def get_magnitude(self):
-        return abs(self.normalized_change)
+        return abs(self.change)
 
-    def get_start_index(self, ticks: Iterable[Tick]):
+    def get_start_index(self, ticks: Ticks):
         return next(i for i, x in enumerate(ticks) if x.timestamp == self.start_timestamp)
 
-    def get_end_index(self, ticks: Iterable[Tick]):
+    def get_end_index(self, ticks: Ticks):
         return next(i for i, x in enumerate(ticks) if x.timestamp == self.end_timestamp)
 
     def __add__(self, other):
@@ -50,8 +50,8 @@ class Segments(list[Segment]):
     def __init__(self, ticks_or_segments: Iterable[Tick] | Self, reverse_traversal=False):
         super().__init__()
 
-        self.segments = (
-            deque(
+        self.segments = deque(
+            (
                 Segment(
                     start_timestamp=a.timestamp,
                     end_timestamp=b.timestamp,
@@ -63,7 +63,7 @@ class Segments(list[Segment]):
                 )
             )
             if not isinstance(ticks_or_segments, Segments) else
-            deepcopy(ticks_or_segments.segments)
+            ticks_or_segments
         )
 
         if reverse_traversal:
@@ -114,18 +114,18 @@ class Segments(list[Segment]):
         )
 
     def __repr__(self):
-        trends = []
+        segments = []
 
         for x in self.segments:
-            trends.append(
-                f'{x.start_timestamp.strftime("%m-%d %H:%M")}: {x.normalized_change:7.1%}'
+            segments.append(
+                f'{x.start_timestamp.strftime("%m-%d %H:%M")}: {x.change:7.1%}'
             )
 
         return (
                 type(self).__name__ +
                 '(\n    ' +
                 (
-                    '\n    '.join(trends)
+                    '\n    '.join(segments)
                     if len(self.segments) <= 50
                     else f'total: {len(self.segments)}'
                 ) +
@@ -133,42 +133,21 @@ class Segments(list[Segment]):
         )
 
 
-@dataclass
-class _TrendsViewValue:
-    max_timeframe: Timeframe = None
-    max_magnitude: float = None
+class SegmentsViews(Enum):
+    DEFAULT = None
 
-    def __post_init__(self):
-        if self.max_magnitude: self.max_magnitude /= 100
-
-
-class TrendsView(Enum):
-
-    TIMEFRAME_10M = _TrendsViewValue(
-        max_timeframe=Timeframe(minutes=10),
-    )
-
-    TIMEFRAME_15M = _TrendsViewValue(
-        max_timeframe=Timeframe(minutes=15),
-    )
-
-    TIMEFRAME_30M = _TrendsViewValue(
-        max_timeframe=Timeframe(minutes=30),
-    )
-
-    GLOBAL = _TrendsViewValue()
-
-    def generate_trends(self, ticks_or_trends: Iterable[Tick] | Segments) -> Segments:
-        return Segments(ticks_or_trends, max_timeframe=self.value.max_timeframe, max_magnitude=self.value.max_magnitude)
+    def generate(self, ticks_or_segments: Ticks | Segments, reverse_traversal=False) -> Segments:
+        return Segments(ticks_or_segments, reverse_traversal=reverse_traversal)
 
     @staticmethod
-    def generate_all(ticks_or_trends: Iterable[Tick] | Segments) -> list[Segments]:
+    def generate_all(ticks_or_segments: Ticks | Segments, reverse_traversal=False) -> list[Segments]:
         accumulator = []
 
-        for trends_view in TrendsView:
+        for segments_view in SegmentsViews:
             accumulator.append(
-                trends_view.generate_trends(
-                    ticks_or_trends if not accumulator else accumulator[-1]
+                segments_view.generate(
+                    ticks_or_segments if not accumulator else accumulator[-1],
+                    reverse_traversal=reverse_traversal
                 )
             )
 

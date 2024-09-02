@@ -4,21 +4,20 @@ from typing import ForwardRef, Generator, Iterable
 
 from dex_sonar.auxiliary.time import Timedelta, Timestamp
 from dex_sonar.config.config import TESTING_MODE, config
-from .segments import Segment, Segments, SegmentsSlice, TrendsView
+from .segments import Segment, Segments, SegmentsViews
 from .ticks import Tick
-from ..network import Pool as NetworkPool
+from ..network import Pool
 
 
-Timeframe = Timedelta
-Significance = bool
-Magnitude = float
+# Significance = bool
+# Magnitude = float
 
 
 @dataclass
 class PatternUnit:
-    min_change: float
-    min_timeframe: Timeframe = None
-    max_timeframe: Timeframe = None
+    min_chanxge: float
+    min_timeframe: Timedelta = None
+    max_timeframe: Timedelta = None
 
     def __post_init__(self):
         self.min_change /= 100
@@ -31,7 +30,7 @@ class PatternUnit:
         return a * b >= 0
 
     @staticmethod
-    def _scale(x, pool: NetworkPool = None, base=100_000, slope=2.5):
+    def _scale(x, pool: Pool = None, base=100_000, slope=2.5):
         if TESTING_MODE:
             return x / 10
         if pool and pool.liquidity and pool.liquidity < base:
@@ -39,9 +38,9 @@ class PatternUnit:
             return x * (1 + slope * deviation)
         return x
 
-    def match(self, trend: Segment, pool: NetworkPool):
+    def match(self, trend: Segment, pool: Pool):
         return (
-                self._have_same_sign(self.min_change, trend.normalized_change) and trend.get_magnitude() >= self._scale(self.get_magnitude(), pool) and
+                self._have_same_sign(self.min_change, trend.change) and trend.get_magnitude() >= self._scale(self.get_magnitude(), pool) and
                 not (self.min_timeframe and trend.get_timeframe() < self.min_timeframe) and
                 not (self.max_timeframe and trend.get_timeframe() > self.max_timeframe)
         )
@@ -84,7 +83,7 @@ class _PatternBody:
     def match(
             self,
             trends: Segments,
-            pool: NetworkPool,
+            pool: Pool,
             delay_tolerance: Timeframe = None,
     ) -> _PatternMatchBody | None:
 
@@ -181,18 +180,18 @@ class Pattern(Enum):
         if self is Pattern.SLOW_UPTREND: return 'SU'
         return self.name[0]
 
-    def match(self, ticks: Iterable[Tick], pool: NetworkPool = None) -> Generator[PatternMatch, None, None]:
+    def match(self, ticks: Iterable[Tick], pool: Pool = None) -> Generator[PatternMatch, None, None]:
 
-        trends_views = TrendsView.generate_all(ticks)
+        trends_views = SegmentsViews.generate_all(ticks)
 
         for trends in trends_views:
             if match_body := self.value.match(trends, pool, delay_tolerance=Timeframe(minutes=config.getint('Patterns', 'delay_tolerance'))):
                 yield PatternMatch(self, match_body)
 
     @staticmethod
-    def match_any(ticks: Iterable[Tick], pool: NetworkPool = None, reverse_trends_views_traversal=False) -> Generator[PatternMatch, None, None]:
+    def match_any(ticks: Iterable[Tick], pool: Pool = None, reverse_trends_views_traversal=False) -> Generator[PatternMatch, None, None]:
 
-        trends_views = TrendsView.generate_all(ticks)
+        trends_views = SegmentsViews.generate_all(ticks)
         if reverse_trends_views_traversal: trends_views = list(reversed(trends_views))
 
         for pattern in Pattern:

@@ -14,7 +14,7 @@ from matplotlib.ticker import MaxNLocator
 from dex_sonar.auxiliary.time import Timedelta, Timestamp
 from dex_sonar.config.config import config
 from .patterns import Pattern, PatternMatch
-from .segments import TrendsView
+from .segments import SegmentsViews
 from .ticks import CompleteTick, IncompleteTick, Tick
 from ..network import Pool as NetworkPool
 
@@ -262,7 +262,7 @@ class Chart:
     @contextmanager
     def create_plot(
             self,
-            trends_view: TrendsView = TrendsView.GLOBAL,
+            trends_view: SegmentsViews = SegmentsViews.DEFAULT,
             mark_pattern_every_tick: int | None = None,
 
             plot_size_scheme: PlotSizeScheme = PlotSizeScheme(),
@@ -286,7 +286,7 @@ class Chart:
 
         tick_limit = max_timeframe // TIMESTAMP_UNIT
         ticks = self._pad_ticks()[-tick_limit:]
-        trends = trends_view.generate_trends(ticks)
+        trends = trends_view.generate(ticks)
 
         self.fig, ax1 = plt.subplots(figsize=(plot_size_scheme.width, plot_size_scheme.width * plot_size_scheme.ratio))
         ax2 = ax1.twinx()
