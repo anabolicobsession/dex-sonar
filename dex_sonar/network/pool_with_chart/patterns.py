@@ -1,49 +1,72 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import ForwardRef, Generator, Iterable
+from typing import Callable, ForwardRef, Generator, Iterable
 
-from dex_sonar.auxiliary.time import Timedelta, Timestamp
+from dex_sonar.auxiliary.time import Timestamp
 from dex_sonar.config.config import TESTING_MODE, config
-from .segments import Segment, Segments, SegmentsViews
+from .segments import Change, Segment, Segments, SegmentsViews, Timeframe
 from .ticks import Tick
 from ..network import Pool
 
 
-# Significance = bool
-# Magnitude = float
+Magnitude = Change
 
 
 @dataclass
-class PatternUnit:
-    min_chanxge: float
-    min_timeframe: Timedelta = None
-    max_timeframe: Timedelta = None
+class Match:
+    is_first_order: bool
+
+
+@dataclass
+class Unit:
+    min_change_fun: Callable[[Timeframe, Pool], (Change | None, Change | None)]
+    min_timeframe: Timeframe = None
+    max_timeframe: Timeframe = None
 
     def __post_init__(self):
-        self.min_change /= 100
+        self.min_change_fun = staticmethod(self.min_change_fun)
 
-    def get_magnitude(self):
-        return abs(self.min_change)
+    def get_match(self, segment: Segment, pool: Pool) -> Match | None:
+        timeframe = segment.get_timeframe()
+
+        if (
+                self.min_timeframe and timeframe < self.min_timeframe or
+                self.max_timeframe and timeframe > self.max_timeframe
+        ):
+            return None
+
+        else:
+            min_change, min_change_second_order = self.min_change_fun(timeframe, pool)
+
+            if min_change and self._does_satisfy(segment, min_change):
+                return Match(is_first_order=True)
+
+            elif min_change_second_order and self._does_satisfy(segment, min_change_second_order):
+                return Match(is_first_order=False)
+
+            else:
+                return None
 
     @staticmethod
-    def _have_same_sign(a, b):
-        return a * b >= 0
+    def _does_satisfy(segment: Segment, min_change: Change):
+        return min_change * segment.change >= 0 and segment.get_magnitude() >= min_change
 
-    @staticmethod
-    def _scale(x, pool: Pool = None, base=100_000, slope=2.5):
-        if TESTING_MODE:
-            return x / 10
-        if pool and pool.liquidity and pool.liquidity < base:
-            deviation = (base - pool.liquidity) / base
-            return x * (1 + slope * deviation)
-        return x
 
-    def match(self, trend: Segment, pool: Pool):
-        return (
-                self._have_same_sign(self.min_change, trend.change) and trend.get_magnitude() >= self._scale(self.get_magnitude(), pool) and
-                not (self.min_timeframe and trend.get_timeframe() < self.min_timeframe) and
-                not (self.max_timeframe and trend.get_timeframe() > self.max_timeframe)
+class Units:
+    def __init__(self, *units: Unit):
+        self.units = units
+
+
+class Patterns(Enum):
+
+    DUMP = Units(
+        Unit(
+
         )
+    )
+    
+
+# Significance = bool
 
 
 @dataclass
@@ -55,15 +78,15 @@ class _PatternMatchBody:
 
 
 class _PatternBody:
-    def __init__(self, *units: PatternUnit, significance_threshold: float = None):
+    def __init__(self, *units: Unit, significance_threshold: float = None):
         self.units = units
         self.length = len(units)
         self.significance_threshold = significance_threshold / 100 if significance_threshold else None
-        self.magnitude_index = max(enumerate(units), key=lambda x: x[1].get_magnitude())[0]
+        self.magnitude_index = max(enumerate(units), key=lambda x: x[1].get_min_magnitude())[0]
 
     def _match(self, trends_slice, pool):
         return all([
-            x.match(y, pool) for x, y in zip(
+            x.get_match(y, pool) for x, y in zip(
                 self.units,
                 trends_slice,
             )
@@ -71,7 +94,7 @@ class _PatternBody:
 
     def _extract_info(self, trends: SegmentsSlice) -> tuple[Significance, Magnitude]:
         magnitude = trends[self.magnitude_index].get_magnitude()
-        pattern_magnitude = self.units[self.magnitude_index].get_magnitude()
+        pattern_magnitude = self.units[self.magnitude_index].get_min_magnitude()
         ratio = magnitude / pattern_magnitude
         return (
             trends[0].start_timestamp,
@@ -111,6 +134,16 @@ class _PatternBody:
 _Pattern = ForwardRef('Pattern')
 
 
+# @staticmethod
+# def _scale(x, pool: Pool = None, base=100_000, slope=2.5):
+#     if TESTING_MODE:
+#         return x / 10
+#     if pool and pool.liquidity and pool.liquidity < base:
+#         deviation = (base - pool.liquidity) / base
+#         return x * (1 + slope * deviation)
+#     return x
+
+
 class PatternMatch(_PatternMatchBody):
     def __init__(self, pattern: _Pattern, body: _PatternMatchBody):
         self.pattern = pattern
@@ -120,14 +153,14 @@ class PatternMatch(_PatternMatchBody):
 class Pattern(Enum):
 
     DUMP = _PatternBody(
-        PatternUnit(
+        Unit(
             -8,
             max_timeframe=Timeframe(minutes=10)
         ),
     )
 
     DOWNTREND = _PatternBody(
-        PatternUnit(
+        Unit(
             -30,
             max_timeframe=Timeframe(hours=2)
         ),
@@ -135,11 +168,11 @@ class Pattern(Enum):
     )
 
     REVERSAL = _PatternBody(
-        PatternUnit(
+        Unit(
             -30,
             min_timeframe=Timeframe(hours=2)
         ),
-        PatternUnit(
+        Unit(
             10,
             min_timeframe=Timeframe(minutes=30)
         ),
@@ -148,7 +181,7 @@ class Pattern(Enum):
 
 
     PUMP = _PatternBody(
-        PatternUnit(
+        Unit(
             50,
             max_timeframe=Timeframe(hours=1)
         ),
@@ -156,7 +189,7 @@ class Pattern(Enum):
     )
 
     UPTREND = _PatternBody(
-        PatternUnit(
+        Unit(
             20,
             min_timeframe=Timeframe(hours=2)
         ),
@@ -164,7 +197,7 @@ class Pattern(Enum):
     )
 
     SLOW_UPTREND = _PatternBody(
-        PatternUnit(
+        Unit(
             10,
             min_timeframe=Timeframe(hours=12)
         ),

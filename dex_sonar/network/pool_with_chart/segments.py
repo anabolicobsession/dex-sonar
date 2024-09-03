@@ -7,15 +7,16 @@ from dex_sonar.auxiliary.time import Timedelta, Timestamp
 from .ticks import Price, Tick
 
 
+Change = float
 Timeframe = Timedelta
 Ticks = Iterable[Tick]
 
 
 @dataclass
 class Segment:
+    prices: list[Price]
     start_timestamp: Timestamp
     end_timestamp: Timestamp
-    prices: list[Price]
 
     def __post_init__(self):
         self.change = self.prices[-1] / self.prices[0] - 1
@@ -23,10 +24,10 @@ class Segment:
     def is_upward(self):
         return self.change > 0
 
-    def is_codirectional_with(self, other: Self):
+    def has_same_direction_as(self, other: Self):
         return self.change * other.change >= 0
 
-    def get_timeframe(self) -> Timedelta:
+    def get_timeframe(self) -> Timeframe:
         return self.end_timestamp - self.start_timestamp
 
     def get_magnitude(self):
@@ -50,7 +51,7 @@ class Segments(list[Segment]):
     def __init__(self, ticks_or_segments: Iterable[Tick] | Self, reverse_traversal=False):
         super().__init__()
 
-        self.segments = deque(
+        self.segments: deque[Segment] = deque(
             (
                 Segment(
                     start_timestamp=a.timestamp,
@@ -74,11 +75,11 @@ class Segments(list[Segment]):
             s1, s2, s3 = self.segments[i], self.segments[i + 1], self.segments[i + 2]
             replacement_done = False
 
-            if s1.is_codirectional_with(s2):
+            if s1.has_same_direction_as(s2):
                 self._replace_by_concatenation(i, s1, s2)
                 replacement_done = True
 
-            elif s2.is_codirectional_with(s3):
+            elif s2.has_same_direction_as(s3):
                 self._replace_by_concatenation(i + 1, s2, s3)
                 replacement_done = True
 
@@ -94,7 +95,7 @@ class Segments(list[Segment]):
 
         if len(self.segments) == 2:
             s1, s2 = self.segments[i], self.segments[i + 1]
-            if s1.is_codirectional_with(s2): self._replace_by_concatenation(0, s1, s2)
+            if s1.has_same_direction_as(s2): self._replace_by_concatenation(0, s1, s2)
 
         if reverse_traversal:
             self.segments.reverse()
@@ -109,7 +110,7 @@ class Segments(list[Segment]):
     @staticmethod
     def _can_be_absorbed(left: Segment, middle: Segment, right: Segment):
         return (
-                left.is_codirectional_with(right) and not left.is_codirectional_with(middle) and
+                left.has_same_direction_as(right) and not left.has_same_direction_as(middle) and
                 middle.get_magnitude() <= min(left.get_magnitude(), right.get_magnitude())
         )
 
