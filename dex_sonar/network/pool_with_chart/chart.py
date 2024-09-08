@@ -13,7 +13,7 @@ from matplotlib.ticker import MaxNLocator
 
 from dex_sonar.auxiliary.time import Timedelta, Timestamp
 from dex_sonar.config.config import config
-from .patterns import Pattern, PatternMatch
+from .patterns import PatternOld, PatternMatch
 from .segments import SegmentsViews
 from .ticks import CompleteTick, IncompleteTick, Tick
 from ..network import Pool as NetworkPool
@@ -203,7 +203,7 @@ class Chart:
             self.ticks.extend(new_ticks)
 
     def get_pattern(self, only_new=False) -> PatternMatch | None:
-        for match in Pattern.match_any(self.ticks, self.pool, reverse_trends_views_traversal=True):
+        for match in PatternOld.match_any(self.ticks, self.pool, reverse_trends_views_traversal=True):
             if (
                     only_new and
                     self.previous_pattern_end_timestamp and
@@ -346,11 +346,11 @@ class Chart:
 
             pattern_string_mapping = {}
 
-            for pattern in Pattern:
+            for pattern in PatternOld:
                 name = pattern.name
 
-                if pattern is Pattern.DOWNTREND: pattern_string_mapping[pattern] = 'DW'
-                if pattern is Pattern.SLOW_UPTREND: pattern_string_mapping[pattern] = 'SU'
+                if pattern is PatternOld.DOWNTREND: pattern_string_mapping[pattern] = 'DW'
+                if pattern is PatternOld.SLOW_UPTREND: pattern_string_mapping[pattern] = 'SU'
 
                 if pattern not in pattern_string_mapping.keys():
                     pattern_string_mapping[pattern] = next(
@@ -362,11 +362,11 @@ class Chart:
             indices = list(range(0, len(ticks), mark_pattern_every_tick))
             if indices[-1] != len(ticks) - 1: indices.append(len(ticks) - 1)
 
-            patterns: list[int, Pattern] = []
+            patterns: list[int, PatternOld] = []
 
             for i in indices:
                 if patterns and i - patterns[-1][0] < min_distance_between_marks: continue
-                match = next(Pattern.match_any(ticks[:i + 1], self.pool, reverse_trends_views_traversal=True), None)
+                match = next(PatternOld.match_any(ticks[:i + 1], self.pool, reverse_trends_views_traversal=True), None)
                 if match: patterns.append((i, match.pattern))
 
 

@@ -14,12 +14,36 @@ Ticks = Iterable[Tick]
 
 @dataclass
 class Segment:
+    timestamps: list[Timestamp]
     prices: list[Price]
-    start_timestamp: Timestamp
-    end_timestamp: Timestamp
 
     def __post_init__(self):
         self.change = self.prices[-1] / self.prices[0] - 1
+
+    def __add__(self, other: Self):
+        return (
+            Segment(self.timestamps + other.timestamps, self.prices + other.prices)
+            if self.get_start_timestamp() < other.get_start_timestamp() else
+            Segment(other.timestamps + self.timestamps, other.prices + self.prices)
+        )
+
+    def get_start_timestamp(self) -> Timestamp:
+        return self.timestamps[0]
+
+    def get_end_timestamp(self) -> Timestamp:
+        return self.timestamps[-1]
+
+    def get_timeframe(self) -> Timeframe:
+        return self.timestamps[-1] - self.timestamps[0]
+
+    def get_magnitude(self):
+        return abs(self.change)
+
+    def get_start_index(self, ticks: Ticks):
+        return next(i for i, x in enumerate(ticks) if x.timestamp == self.get_start_timestamp())
+
+    def get_end_index(self, ticks: Ticks):
+        return next(i for i, x in enumerate(ticks) if x.timestamp == self.get_end_timestamp())
 
     def is_upward(self):
         return self.change > 0
@@ -27,24 +51,20 @@ class Segment:
     def has_same_direction_as(self, other: Self):
         return self.change * other.change >= 0
 
-    def get_timeframe(self) -> Timeframe:
-        return self.end_timestamp - self.start_timestamp
+    def find_right_subset_that_fit(self, min_timeframe: Timeframe | None, max_timeframe: Timeframe, min_change: Change) -> Self | None:
+        for i, start_timestamp, start_price in enumerate(zip(self.timestamps, self.prices)):
+            timeframe = self.timestamps[-1] - start_timestamp
 
-    def get_magnitude(self):
-        return abs(self.change)
+            if timeframe <= max_timeframe:
+                if min_timeframe and timeframe < min_timeframe:
+                    return None
+                else:
+                    change = self.prices[-1] / start_price - 1
 
-    def get_start_index(self, ticks: Ticks):
-        return next(i for i, x in enumerate(ticks) if x.timestamp == self.start_timestamp)
+                    if change * min_change >= 0 and abs(change) >= abs(min_change):
+                        return Segment(self.timestamps[i:], self.prices[i:])
 
-    def get_end_index(self, ticks: Ticks):
-        return next(i for i, x in enumerate(ticks) if x.timestamp == self.end_timestamp)
-
-    def __add__(self, other):
-        return (
-            Segment(self.start_timestamp, other.end_timestamp, self.prices + other.prices)
-            if self.start_timestamp < other.start_timestamp else
-            Segment(other.start_timestamp, self.end_timestamp, other.prices + self.prices)
-        )
+        return None
 
 
 class Segments(list[Segment]):
@@ -54,8 +74,7 @@ class Segments(list[Segment]):
         self.segments: deque[Segment] = deque(
             (
                 Segment(
-                    start_timestamp=a.timestamp,
-                    end_timestamp=b.timestamp,
+                    timestamps=[a.timestamp, b.timestamp],
                     prices=[a.price, b.price],
                 )
                 for a, b in zip(
@@ -119,7 +138,7 @@ class Segments(list[Segment]):
 
         for x in self.segments:
             segments.append(
-                f'{x.start_timestamp.strftime("%m-%d %H:%M")}: {x.change:7.1%}'
+                f'{x.get_start_timestamp().strftime("%m-%d %H:%M")}: {x.change:7.1%}'
             )
 
         return (

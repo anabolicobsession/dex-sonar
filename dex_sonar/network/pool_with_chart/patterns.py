@@ -18,10 +18,14 @@ class Match:
 
 
 @dataclass
-class Unit:
+class SegmentPattern:
+
     min_change_fun: Callable[[Timeframe, Pool], (Change | None, Change | None)]
     min_timeframe: Timeframe = None
     max_timeframe: Timeframe = None
+
+    is_magnitude_indicator: bool = False
+    can_be_right_subset: bool = False
 
     def __post_init__(self):
         self.min_change_fun = staticmethod(self.min_change_fun)
@@ -33,6 +37,15 @@ class Unit:
                 self.min_timeframe and timeframe < self.min_timeframe or
                 self.max_timeframe and timeframe > self.max_timeframe
         ):
+            if self.can_be_right_subset and self.max_timeframe and self.max_timeframe and timeframe > self.max_timeframe:
+                min_change, min_change_second_order = self.min_change_fun(timeframe, pool)
+
+                if segment.find_right_subset_that_fit(self.min_timeframe, self.max_timeframe, min_change):
+                    return Match(is_first_order=True)
+
+                elif segment.find_right_subset_that_fit(self.min_timeframe, self.max_timeframe, min_change_second_order):
+                    return Match(is_first_order=False)
+
             return None
 
         else:
@@ -49,20 +62,31 @@ class Unit:
 
     @staticmethod
     def _does_satisfy(segment: Segment, min_change: Change):
-        return min_change * segment.change >= 0 and segment.get_magnitude() >= min_change
+        return segment.change * min_change >= 0 and segment.get_magnitude() >= abs(min_change)
 
 
-class Units:
-    def __init__(self, *units: Unit):
-        self.units = units
+class SegmentsPattern(list[SegmentPattern]):
+    def __init__(self, *units: SegmentPattern):
+        super().__init__(units)
+
+        self.magnitude_indicator_index = 0
+
+        for i, unit in enumerate(self):
+
+            if unit.is_magnitude_indicator:
+                self.magnitude_indicator_index = i
+
+            if unit.can_be_right_subset and i > 0:
+                unit.can_be_right_subset = False
+
+    def get_magnitude_indicator_index(self):
+        return self.magnitude_indicator_index
 
 
 class Patterns(Enum):
 
-    DUMP = Units(
-        Unit(
+    DUMP = SegmentsPattern(
 
-        )
     )
     
 
@@ -78,7 +102,7 @@ class _PatternMatchBody:
 
 
 class _PatternBody:
-    def __init__(self, *units: Unit, significance_threshold: float = None):
+    def __init__(self, *units: SegmentPattern, significance_threshold: float = None):
         self.units = units
         self.length = len(units)
         self.significance_threshold = significance_threshold / 100 if significance_threshold else None
@@ -150,17 +174,17 @@ class PatternMatch(_PatternMatchBody):
         super().__init__(body.start_timestamp, body.end_timestamp, body.significant, body.magnitude)
 
 
-class Pattern(Enum):
+class PatternOld(Enum):
 
     DUMP = _PatternBody(
-        Unit(
+        SegmentPattern(
             -8,
             max_timeframe=Timeframe(minutes=10)
         ),
     )
 
     DOWNTREND = _PatternBody(
-        Unit(
+        SegmentPattern(
             -30,
             max_timeframe=Timeframe(hours=2)
         ),
@@ -168,11 +192,11 @@ class Pattern(Enum):
     )
 
     REVERSAL = _PatternBody(
-        Unit(
+        SegmentPattern(
             -30,
             min_timeframe=Timeframe(hours=2)
         ),
-        Unit(
+        SegmentPattern(
             10,
             min_timeframe=Timeframe(minutes=30)
         ),
@@ -181,7 +205,7 @@ class Pattern(Enum):
 
 
     PUMP = _PatternBody(
-        Unit(
+        SegmentPattern(
             50,
             max_timeframe=Timeframe(hours=1)
         ),
@@ -189,7 +213,7 @@ class Pattern(Enum):
     )
 
     UPTREND = _PatternBody(
-        Unit(
+        SegmentPattern(
             20,
             min_timeframe=Timeframe(hours=2)
         ),
@@ -197,7 +221,7 @@ class Pattern(Enum):
     )
 
     SLOW_UPTREND = _PatternBody(
-        Unit(
+        SegmentPattern(
             10,
             min_timeframe=Timeframe(hours=12)
         ),
@@ -209,8 +233,8 @@ class Pattern(Enum):
         return self.name.replace('_', ' ').title()
 
     def get_abbreviation(self):
-        if self is Pattern.DOWNTREND: return 'DW'
-        if self is Pattern.SLOW_UPTREND: return 'SU'
+        if self is PatternOld.DOWNTREND: return 'DW'
+        if self is PatternOld.SLOW_UPTREND: return 'SU'
         return self.name[0]
 
     def match(self, ticks: Iterable[Tick], pool: Pool = None) -> Generator[PatternMatch, None, None]:
@@ -227,7 +251,7 @@ class Pattern(Enum):
         trends_views = SegmentsViews.generate_all(ticks)
         if reverse_trends_views_traversal: trends_views = list(reversed(trends_views))
 
-        for pattern in Pattern:
+        for pattern in PatternOld:
 
             for trends in trends_views:
 
