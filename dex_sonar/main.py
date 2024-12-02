@@ -11,7 +11,7 @@ from dex_sonar.bot import Bot
 from dex_sonar.config.config import TESTING_MODE, config
 from dex_sonar.message import Message, Type as MessageType
 from dex_sonar.network.network import Token
-from dex_sonar.network.pool_with_chart import Pool
+from network.pool_with_chart.pool_with_chart import Pool
 from dex_sonar.pools.pools_with_api import PoolsWithAPI
 from dex_sonar.users import Users
 

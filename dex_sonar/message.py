@@ -7,7 +7,9 @@ from telegram.constants import ParseMode
 
 from dex_sonar.config.config import USER_TIMEZONE, config
 from dex_sonar.network.network import Network
-from dex_sonar.network.pool_with_chart import Backend, MaxBinsScheme, PlotSizeScheme, Pool, SizeScheme, TrendsView
+from network.pool_with_chart.pool import Pool
+from network.pool_with_chart.chart import Backend, MaxBinsScheme, PlotSizeScheme, SizeScheme
+from network.pool_with_chart.segments import SegmentsViews
 
 
 Text = str
@@ -273,7 +275,7 @@ class Message:
     def _create_chart_image(pool: Pool) -> Image:
         with (
             pool.chart.create_plot(
-                trends_view=TrendsView.GLOBAL,
+                trends_view=SegmentsViews.DEFAULT,
                 price_in_percents=True,
                 backend=Backend.AGG,
 

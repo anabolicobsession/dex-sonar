@@ -8,7 +8,9 @@ from dex_sonar.api.geckoterminal_api import AllPages, Candlestick as GeckoTermin
 from dex_sonar.auxiliary.time import Cooldown, Timedelta, Timestamp
 from dex_sonar.config.config import NETWORK_ID
 from dex_sonar.network.network import Address, DEX, Network, TimePeriodsData, Token
-from dex_sonar.network.pool_with_chart import CompleteTick, Pool, TIMESTAMP_UNIT
+from dex_sonar.network.pool_with_chart.pool import Pool
+from network.pool_with_chart.chart import TIMESTAMP_UNIT
+from network.pool_with_chart.ticks import CompleteTick
 from dex_sonar.pools.pools import Pools
 
 
